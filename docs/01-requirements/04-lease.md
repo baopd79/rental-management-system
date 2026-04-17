@@ -522,9 +522,11 @@ sang Lease #[new_lease_id]'`. Lease mới nhận deposit_amount bằng cọc cũ
 
 **Acceptance Criteria:**
 
-- [ ] AC1: Cron job chạy **mỗi ngày lúc 00:05** (cùng cron với Tenant status,
-      Nhóm 3)
-- [ ] AC2: Logic cron (pseudo-code):
+- [ ] AC1: **Daily Status Maintenance Cron** chạy **mỗi ngày lúc 00:05**.
+      Đây là **cron job duy nhất** cho status maintenance của toàn hệ thống,
+      xử lý cả Lease, Tenant, và các trigger khác. Xem chi tiết trong Ghi
+      chú kiến trúc cuối file.
+- [ ] AC2: Logic check Lease status (pseudo-code):
   ```
   FOR each Lease WHERE terminated_at IS NULL:
     IF today < start_date: computed_status = 'draft'
@@ -657,6 +659,35 @@ sang Lease #[new_lease_id]'`. Lease mới nhận deposit_amount bằng cọc cũ
    là **ở tạm**, không miễn phí.
 
 ## Ghi chú kiến trúc cho Phase 3
+
+**Daily Status Maintenance Cron** (kiến trúc tổng):
+
+```
+┌────────────────────────────────────────────┐
+│ Cron: 00:05 daily                          │
+├────────────────────────────────────────────┤
+│ Task 1: Check Lease status transitions     │
+│   - Trigger notifications khi đổi status  │
+│   - KHÔNG UPDATE DB (status computed)      │
+│                                            │
+│ Task 2: Check Tenant status transitions    │
+│   - Trigger notifications                  │
+│   - KHÔNG UPDATE DB (status computed)      │
+│                                            │
+│ Task 3: Room status                        │
+│   - Không cần check (derive từ Lease)      │
+│                                            │
+│ Task 4: Future v1.x — invoice reminders,  │
+│         notification delivery, etc.        │
+├────────────────────────────────────────────┤
+│ Output: Log file (count + errors)          │
+│ Property: Idempotent (chạy 2 lần = 1 lần) │
+└────────────────────────────────────────────┘
+```
+
+**Lưu ý**: MVP không có notification thật (email/push), nên cron task 1-3
+gần như no-op về side effects. Nhưng giữ structure để v1.x plug notification
+vào dễ dàng. Xem Phase 3 ADR "Cron job architecture" để chi tiết.
 
 **Entity Relationships (preview):**
 

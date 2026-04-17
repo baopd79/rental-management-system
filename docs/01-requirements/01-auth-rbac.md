@@ -107,6 +107,10 @@ phân quyền, khôi phục tài khoản.
 **Notes:**
 
 - Rate limiting (AC4) có thể dùng trong-memory cho MVP, Redis cho v1.x
+- **US-002 cover cả Landlord và Tenant login**: cùng endpoint `POST /auth/login`,
+  cùng UI form. Sự khác biệt duy nhất là `role` trong JWT payload (xem
+  US-009). Tenant account được tạo qua flow invite (US-005), sau đó login
+  bằng email + password tự set.
 
 ---
 
@@ -151,7 +155,8 @@ phân quyền, khôi phục tài khoản.
 
 **Priority**: Must
 **Estimate**: M
-**Depends on**: US-001, US-030 (Tenant CRUD — nhóm sau)
+**Depends on**: US-001, US-003 (forgot password — reuse cho reactivation),
+US-030 (Tenant CRUD)
 
 **Acceptance Criteria:**
 
@@ -167,6 +172,16 @@ phân quyền, khôi phục tài khoản.
       token active của Tenant đó bị invalidate tự động
 - [ ] AC7: Link chỉ có thể sinh bởi Landlord **sở hữu Property chứa Room
       của Tenant đó** (không cho mời Tenant của người khác)
+- [ ] AC8: **Reactivation case** — nếu Tenant đã có `user_id` (đã từng
+      accept invite trước đó, từ Lease cũ đã terminated và Tenant archived,
+      giờ được reactivate qua US-030 AC7/AC8):
+  - Nút "Gửi lời mời" đổi thành "Kích hoạt lại tài khoản"
+  - Click → **không sinh invite token mới** (vì đã có User account)
+  - Thay vào đó: unarchive User account + invalidate mọi refresh token cũ
+    + gửi link **reset password** (reuse flow US-003) cho Tenant set
+      password mới
+  - Landlord copy link reset password (không phải invite link) gửi Zalo
+    cho Tenant
 
 **Notes:**
 
@@ -174,6 +189,8 @@ phân quyền, khôi phục tài khoản.
   và revocable qua DB
 - MVP không tự gửi email/SMS — Landlord copy link và gửi Zalo thủ công
 - v1.x: tích hợp gửi tự động qua email/SMS/Zalo Official Account
+- AC8 tái sử dụng flow reset password để không duplicate logic. Tenant
+  dùng cùng email cũ, chỉ đổi password.
 
 ---
 
@@ -204,11 +221,20 @@ phân quyền, khôi phục tài khoản.
 - [ ] AC4: Submit form → tạo User account với role = `Tenant`, link với
       Tenant record, set password hash, đánh dấu token `used_at = now()`
 - [ ] AC5: Auto login + redirect vào dashboard Tenant
+- [ ] AC6: **Edge case guard** — nếu token valid nhưng Tenant đã có
+      `user_id` (shouldn't happen nếu US-004 AC8 đúng, nhưng phòng bug):
+  - Không tạo User account mới
+  - Hiển thị message: "Tài khoản đã tồn tại. Vui lòng dùng chức năng
+    'Quên mật khẩu' để đặt lại mật khẩu."
+  - Redirect sang trang login + forgot password
 
 **Notes:**
 
 - AC3 che SĐT là pattern an toàn: người có link nhưng không biết SĐT đầy đủ
   sẽ không confirm được → thêm 1 lớp verify
+- AC6 là defense-in-depth: flow đúng (US-004 AC8) sẽ dùng reset password
+  cho reactivation, không phải invite token. Nhưng nếu dev vô tình để token
+  invite được sinh cho Tenant đã có User account → AC6 catch case đó.
 
 ---
 
@@ -306,6 +332,23 @@ sửa được gì ngoài thông tin cá nhân
 4. **Rate limiting** (US-002 AC4, US-006 AC6): in-memory hay Redis?
 5. **Session limit**: 1 user login được bao nhiêu device cùng lúc?
    (MVP có thể unlimited, v1.x cân nhắc)
+6. **Multi-role per user**: 1 User account có thể vừa là Landlord vừa là
+   Tenant không? (Case: Bảo cho thuê nhà mình, đồng thời đi thuê nhà người
+   khác cũng trên app này)
+   - Option A: 1 user = 1 role (MVP, đơn giản). Bảo phải tạo 2 account
+     riêng với 2 email khác nhau nếu muốn cả 2 vai trò.
+   - Option B: User có `roles: list[Role]` (phức tạp, cần logic role
+     switcher ở UI).
+   - Option C: Tách User (auth) khỏi Profile (Landlord/Tenant record).
+     1 auth user có N profile khác nhau.
+   - **Đề xuất MVP: Option A**. Simpler, match 99% use cases.
+7. **Landlord/Tenant relationship với User**:
+   - Landlord: `User.role = 'landlord'` → 1-1 với User record (không có
+     Landlord entity riêng)
+   - Tenant: có Tenant entity riêng (domain), có thể `user_id = NULL`
+     (chưa invite), có thể `user_id` trỏ đến User role=tenant (đã invite)
+   - **Pattern khác nhau có lý do**: Landlord always has account; Tenant
+     may or may not (Landlord có thể track Tenant không biết công nghệ)
 
 ## Mapping sang Functional Requirements (sẽ viết ở file tiếp theo)
 

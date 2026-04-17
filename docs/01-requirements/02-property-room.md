@@ -55,15 +55,25 @@ nhiều Phòng (Room). Đây là **root container** của mọi data khác
 
 ### Room status enum (MVP)
 
-| Status          | Khi nào                                         | Derive từ                                 |
-| --------------- | ----------------------------------------------- | ----------------------------------------- |
-| `vacant`        | Chưa có Lease active                            | Không có Lease nào `status=active`        |
-| `occupied`      | Đang cho thuê, còn > 30 ngày                    | Lease active, `end_date - today > 30`     |
-| `expiring_soon` | Đang cho thuê, còn ≤ 30 ngày                    | Lease active, `0 ≤ end_date - today ≤ 30` |
-| `lease_expired` | Lease hết hạn, chưa xử lý (tenant có thể còn ở) | Lease active, `end_date - today < 0`      |
+Room.status **derive 1-1 từ Lease.status** (xem Nhóm 4 — Lease Lifecycle).
+Không tính lại từ `end_date` để tránh mâu thuẫn giữa 2 enum.
 
-**Quan trọng**: Status là **computed field**, không lưu vào DB.
+| Room.status     | Khi nào                                                 | Derive từ Lease.status của Lease non-terminal trên Room |
+| --------------- | ------------------------------------------------------- | ------------------------------------------------------- |
+| `vacant`        | Room không có Lease nào, hoặc chỉ có Lease `terminated` | Không có Lease non-terminal                             |
+| `occupied`      | Đang cho thuê bình thường                               | Lease.status = `active`                                 |
+| `expiring_soon` | Đang cho thuê, sắp hết hạn                              | Lease.status = `expiring_soon`                          |
+| `lease_expired` | Hợp đồng hết hạn, Tenant có thể còn ở, chưa xử lý       | Lease.status = `expired`                                |
+
+**Lưu ý naming**: Room dùng `lease_expired` (rõ context "hợp đồng trên phòng đã hết")
+trong khi Lease dùng `expired` (rõ context "hợp đồng này đã hết"). Đây là
+chủ ý — 2 context khác nhau nên dùng 2 tên khác nhau, nhưng map 1-1.
+
+**Quan trọng**: Room.status là **computed field**, không lưu vào DB.
 Tránh bug "status lệch data thật".
+
+**Room.status ứng với Lease.status = `draft`**: Room vẫn `vacant` (Lease
+chưa hiệu lực). Xem Nhóm 4 US-050 AC5.
 
 ---
 
@@ -297,40 +307,45 @@ Tránh bug "status lệch data thật".
 **Acceptance Criteria:**
 
 - [ ] AC1: Status được **tính khi query** (computed field), không lưu DB
-- [ ] AC2: Logic derive (chỉ xét Lease không bị `terminated`):
+- [ ] AC2: Logic derive — **map 1-1 từ Lease.status** (Lease non-terminal
+      là Lease có `terminated_at IS NULL`):
 
   ```
-  Nếu không có Lease nào còn gắn với Room → 'vacant'
+  Nếu Room không có Lease non-terminal nào → 'vacant'
 
-  Nếu có Lease với end_date >= today:
-    days_left = lease.end_date - today
-    > 30  → 'occupied'
-    ≤ 30  → 'expiring_soon'
+  Nếu Room có Lease non-terminal:
+  Lease.status = 'draft'          → Room.status = 'vacant'
+  Lease.status = 'active'         → Room.status = 'occupied'
+  Lease.status = 'expiring_soon'  → Room.status = 'expiring_soon'
+  Lease.status = 'expired'        → Room.status = 'lease_expired'
 
-  Nếu có Lease với end_date < today (đã qua hạn):
-    → 'lease_expired'
+  Lease.status = 'terminated' không còn là "non-terminal" → không xét.
   ```
+
+**Trong đó Lease.status được tính theo công thức ở Nhóm 4** (Lease Lifecycle).
+Room.status **không được tính riêng từ end_date** — phải đi qua Lease.status
+để tránh lệch giữa 2 nhóm.
 
 - [ ] AC3: Business rule: mỗi Room chỉ có **1 Lease không terminated** tại
       một thời điểm. Nếu data có > 1 (do lỗi) → log warning, lấy Lease có
       `end_date` xa nhất làm Lease hiện tại
 - [ ] AC4: Khi tạo/gia hạn/chấm dứt Lease → status Room tự cập nhật ngay
       (không cần action riêng vì computed)
-- [ ] AC5: Cron job hằng ngày (00:00) tự động chuyển Lease status từ
-      `active` → `expired` khi `end_date < today`. Việc này tách logic
-      hợp đồng khỏi logic Room status.
+- [ ] AC5: Lease.status là **computed**, không cần cron UPDATE. Cron daily
+      chỉ để trigger notifications khi status đổi (xem Nhóm 4 US-057).
+      Room.status cũng computed theo mỗi query, không cron riêng.
 - [ ] AC6: Room ở status `lease_expired` vẫn được phép tạo Invoice tháng
       tiếp theo, nhưng UI phải hiện cảnh báo đỏ: "Hợp đồng đã hết hạn từ
       ngày X. Cân nhắc gia hạn hoặc chấm dứt."
 
 **Notes:**
 
-- **Tách biệt concept**: `Lease.status` (hợp đồng) và `Room.status` (phòng) là
-  2 thứ khác nhau. Lease status đổi qua cron (stored). Room status tính từ
-  Lease data (computed).
-- Cron job ở AC5 giúp tránh mâu thuẫn "Lease active nhưng end_date đã qua".
-  Nếu cron chậm 1 ngày → data tạm lệch nhưng UX không bị ảnh hưởng nghiêm
-  trọng (Landlord vẫn thấy cảnh báo qua `lease_expired`).
+- **2 concept khác nhau nhưng map 1-1**: `Lease.status` (góc nhìn hợp đồng)
+  và `Room.status` (góc nhìn phòng). Cả 2 đều **computed**, không lưu DB.
+  Room.status query qua Lease.status, không tính riêng.
+- Naming khác nhau có chủ ý: Room dùng `lease_expired`, Lease dùng `expired`.
+  Lý do: đọc "Room.lease_expired" rõ ngay là "hợp đồng trên phòng này đã hết",
+  còn "Lease.expired" là "hợp đồng này đã hết" — mỗi context dùng tên phù hợp.
 - AC6 đáp ứng thực tế VN: Lease hết hạn nhưng tenant vẫn ở, tiếp tục trả tiền.
   Hệ thống không được **chặn** Landlord, chỉ **cảnh báo**.
 

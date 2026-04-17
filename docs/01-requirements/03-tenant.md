@@ -370,6 +370,40 @@ Lan ở lại. Landlord cần:
 
 ---
 
+### US-036b: Tenant status auto-transition (cron daily)
+
+**As a** hệ thống (cron job)
+**I want to** kiểm tra Tenant status mỗi ngày để trigger notifications
+**So that** Landlord được cảnh báo khi Tenant status đổi (VD: Lease expire)
+
+**Priority**: Must
+**Estimate**: S (leverage cron đã có ở Nhóm 4 US-057)
+**Depends on**: US-030, Nhóm 4 US-057
+
+**Acceptance Criteria:**
+
+- [ ] AC1: Chạy **chung cron với Nhóm 4 US-057** (00:05 daily), không phải
+      cron riêng
+- [ ] AC2: Logic (pseudo-code):
+  ```
+  FOR each Tenant WHERE is_archived = false:
+    IF count(active Leases of tenant) > 0: status = 'active'
+    ELSE IF exists terminated/expired Leases: status = 'moved_out'  -- edge case
+    ELSE: status = 'pending'  -- chưa có Lease nào
+  ```
+- [ ] AC3: Tenant.status là **computed**, không UPDATE DB. Cron chỉ để
+      trigger notifications khi status đổi (v1.x)
+- [ ] AC4: Side effects MVP: cập nhật dashboard widget (US-058 kiểu) nếu có
+- [ ] AC5: Cron idempotent
+
+**Notes:**
+
+- Story này nhỏ vì logic chính đã ở Nhóm 4 US-057. Chỉ là 1 task thêm vào
+  cùng cron.
+- MVP notification chưa có → task này gần như no-op. Giữ để v1.x plug.
+
+---
+
 ### US-037: Tenant xem và sửa thông tin cá nhân của mình
 
 **As a** Tenant đã login

@@ -7,11 +7,63 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### In Progress — Phase 2: Requirements
 
-- Nhóm 4 (Lease): chưa bắt đầu
-- Nhóm 5 (Service): chưa bắt đầu
 - Nhóm 6 (Meter Reading): chưa bắt đầu
 - Nhóm 7 (Invoice): chưa bắt đầu
 - Nhóm 8 (Payment): chưa bắt đầu
+
+## [0.4.1] – 2026-04-18 — Phase 2 Gate Review (Mid-phase)
+
+### Added
+
+- **Phase 2 Review** (`docs/01-requirements/PHASE2-REVIEW.md`)
+  - Full cross-reference review of Nhóm 1-5
+  - Identified 2 Critical issues (C1, C2), 5 Should-fix (S1-S5),
+    3 Observations (N1-N3), 4 Strengths
+- **Phase 2 Review Patches** (`docs/01-requirements/PHASE2-REVIEW-PATCHES.md`)
+  - Detailed before/after patches for Claude Code execution
+
+### Fixed (from review)
+
+- **C1**: Unified Room.status derivation — now maps 1-1 from Lease.status
+  instead of computing from end_date independently
+  - `02-property-room.md` US-017 AC2, AC5
+- **C2**: Handled Tenant reactivation in invite flow — reuse forgot password
+  flow instead of creating duplicate User account
+  - `01-auth-rbac.md` US-004 AC8, US-005 AC6
+- **S2**: Consolidated cron jobs into single "Daily Status Maintenance Cron"
+  - `04-lease.md` US-057 AC1, architecture section
+  - `03-tenant.md` US-036b added
+- **S3**: Documented multi-role user as Open Question
+  - `01-auth-rbac.md` Open Questions #6, #7
+- **S4**: Clarified US-002 covers both Landlord and Tenant login
+  - `01-auth-rbac.md` US-002 Notes
+
+### Updated
+
+- `glossary.md`: Added Occupant, billing_type, Service scope,
+  full status enums for Room/Lease/Tenant/Invoice/Deposit
+
+## [0.4.0] – 2026-04-18 — Phase 2: Requirements (Nhóm 5) DRAFT
+
+### Added
+
+- **Nhóm 5: Service** (`docs/01-requirements/05-service.md`)
+  - 7 user stories (US-060 → US-066)
+  - 3 billing types: per_meter / per_person / fixed
+  - Service scope: all_rooms (default) / selected_rooms (cho công tơ chung)
+  - Shared per_meter chia theo số người các phòng trong scope
+  - Toggle is_active thay cho hard/soft delete
+  - Unit auto theo billing_type (chỉ per_meter mới nhập)
+
+### Decisions
+
+- Service là template, không phải entity sống
+- Invoice Immutability Pattern: Invoice snapshot giá tại thời điểm tạo,
+  Service đổi sau không ảnh hưởng Invoice cũ
+- Service config ở Property-level (không có Room-level)
+- Không per-Lease override ở MVP
+- Không đổi giá giữa kỳ (áp dụng từ tháng sau)
+- Phòng trống trong shared meter không chịu phí
 
 ## [0.3.0] – 2026-04-17 — Phase 2: Requirements (Nhóm 1-4) DRAFT
 
@@ -65,8 +117,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Total
 
-- 26 user stories / ~55 dự kiến cho toàn MVP
-- 3/8 nhóm hoàn thành draft
+- 36 user stories / ~55 dự kiến cho toàn MVP
+- 4/8 nhóm hoàn thành draft
 
 ## [0.1.0] – 2026-04-17 — Phase 1: Vision & Scope APPROVED
 
