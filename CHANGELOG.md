@@ -13,7 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Nhóm 7 (Invoice): chưa bắt đầu
 - Nhóm 8 (Payment): chưa bắt đầu
 
-## [0.2.0] – 2026-04-17 — Phase 2: Requirements (Nhóm 1-3) DRAFT
+## [0.3.0] – 2026-04-17 — Phase 2: Requirements (Nhóm 1-4) DRAFT
 
 ### Added
 
@@ -43,13 +43,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - US-036 Promote Occupant → Tenant (đổi người đại diện)
   - Data Retention Policy draft (theo Nghị định 13/2023/NĐ-CP)
 
+- **Nhóm 4: Lease** (`docs/01-requirements/04-lease.md`)
+  - 10 user stories (US-050 → US-059)
+  - Strict single-active: 1 Room chỉ có 1 Lease active
+  - 5 status: draft / active / expiring_soon / expired / terminated
+  - Status computed (trừ terminated lưu terminated_at)
+  - Pro-rata universal: rent = rent_amount × days_occupied / days_in_month
+  - Deposit 4 status: held / returned / forfeited / deducted
+  - Renewal = tạo Lease mới với renewed_from_lease_id link
+  - Rollover deposit: dùng returned + amount=0 + note (không thêm status mới)
+  - Grace period expired: vẫn tính Invoice theo rent cũ
+
 ### Decisions
 
-- Tenant và User tách 2 entity (Tenant = domain, User = auth)
-- Room status là computed field (không lưu DB) — Single Source of Truth
-- Lease status chuyển bằng cron job daily (active → expired)
-- Unique phone/email theo scope (landlord_id, phone) WHERE is_archived=false
-- Billing per_person dùng snapshot cuối tháng (MVP), pro-rata (v1.x)
+- Landlord dùng start_date/terminated_date làm công cụ chính sách
+  (không có field billing_mode riêng)
+- Lease active gần immutable: chỉ sửa note + end_date
+- Deposit là trạng thái của Lease, không phải giao dịch (không tạo Payment)
+- Terminate và settle deposit tách 2 step riêng (cho flow thực tế linh hoạt)
+- Auto-archive Tenant khi settle deposit xong (cầu nối Lease ↔ Tenant lifecycle)
 
 ### Total
 
