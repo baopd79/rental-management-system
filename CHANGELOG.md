@@ -136,10 +136,59 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Auto-fill previous reading từ reading trước
 - Shared meter applied_rooms fix ở Service, không chọn lại khi nhập
 
-### Total
+## [0.6.0] – 2026-04-18 — Phase 2: Requirements (Nhóm 7) DRAFT
 
-- 49 user stories / ~55 dự kiến cho toàn MVP
-- 6/8 nhóm hoàn thành draft
+### Added
+
+- **Nhóm 7: Invoice** (`docs/01-requirements/07-invoice.md`)
+  - 9 user stories (US-080 → US-088)
+  - Status lifecycle: unpaid → partial → paid + void
+  - Preview + commit pattern (batch per Property)
+  - Individual mode cho edge cases
+  - Invoice Immutability tuyệt đối sau khi tạo
+  - Void thay cho delete, void tạo Invoice mới replacement
+  - Adjustment line manual trong Invoice tháng sau
+
+### Decisions
+
+- Billing month chung cho Invoice, period_month riêng per line item
+- Service đổi giá không affect Invoice đã tạo (mọi status)
+- Sửa reading không auto-update Invoice (Landlord tự void + recreate)
+- Per_person snapshot tại thời điểm tạo Invoice
+- Terminate Lease auto-prompt Invoice cuối pro-rata
+- Line items flatten với description gộp chỉ số
+
+### Format note
+
+- Applied Option C Hybrid: Must stories chi tiết, Should stories gọn
+
+## [0.7.0] – 2026-04-18 — Phase 2: Requirements (Nhóm 8) DRAFT + COMPLETE
+
+### Added
+
+- **Nhóm 8: Payment** (`docs/01-requirements/08-payment.md`)
+  - 5 user stories (US-090 → US-094)
+  - Payment là record-only (Landlord ghi nhận hậu kiểm)
+  - Invoice.status auto-compute từ Payments
+  - Unlimited số Payment per Invoice
+  - Hard delete với trigger recompute
+
+### Decisions
+
+- Không có type enum cho Payment (trạng thái đã ở Invoice.status)
+- Validation strict: không overpay, không future date
+- Tenant thấy full Payment history (transparency)
+
+### Phase 2 COMPLETE 🎉
+
+- **Total: 63 user stories** (US-001 → US-094)
+- **8/8 nhóm** hoàn thành draft
+- **Estimate tổng**: ~15 sprint
+
+### Next steps
+
+- PHASE2-SUMMARY.md (context seed cho Phase 3)
+- Phase 3: Architecture + Database Design
 
 ## [0.1.0] – 2026-04-17 — Phase 1: Vision & Scope APPROVED
 

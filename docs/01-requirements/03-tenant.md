@@ -266,6 +266,10 @@ dịch vụ theo đầu người và đăng ký tạm trú
   MVP billing dùng **snapshot cuối tháng** (đếm người active cuối tháng).
   v1.x upgrade sang **pro-rata** (tính theo số ngày ở thực tế) mà không
   cần migrate schema.
+- AC7 per_person snapshot: MVP lấy **số người tại thời điểm tạo Invoice**
+  (không phải cuối tháng). Lý do: Invoice thường xuất đầu tháng, lúc đó
+  chưa biết Occupant sẽ đổi thế nào cuối tháng. Chấp nhận sai số nhỏ nếu
+  Occupant đổi giữa tháng. v1.x pro-rata theo moved_in/moved_out_date.
 
 ---
 

@@ -21,20 +21,20 @@ số đọc từ công tơ điện/nước tại một thời điểm. Reading l
 
 **Key decisions (đã chốt):**
 
-| #   | Decision                                                       | Lý do                                         |
-| --- | -------------------------------------------------------------- | --------------------------------------------- |
-| 1   | Point-in-time schema: 1 record = 1 reading                     | Single source of truth, consumption computed  |
-| 2   | Chỉ Landlord nhập reading ở MVP                                | Tránh chaos khi Tenant nhập không đồng đều    |
-| 3   | Manual Invoice trigger sau khi có reading (Pattern Y.2)        | Invoice luôn sinh ra đầy đủ, không half-baked |
-| 4   | Batch nhập reading cho toàn Property (1 form duy nhất)         | Match workflow thực tế của Landlord           |
-| 5   | Reminder ngày 5 hàng tháng nếu chưa xuất Invoice               | Tránh quên, giữ tính nhẹ nhàng                |
-| 6   | Validate `reading_value >= previous_value`                     | Case thực tế không có reset, giữ rule đơn giản |
-| 7   | `room_id` nullable: NULL = shared meter, có value = per-room   | Gắn với scope của Service                     |
-| 8   | Shared meter `applied_rooms` fix ở Service, không chọn lại     | Config 1 lần khi tạo Service                  |
-| 9   | Auto-fill previous reading trong form                          | UX tốt, tránh nhập sai số cũ                  |
-| 10  | Reading mutable khi Invoice reference chưa có Payment          | Match case thực tế nhập sai + chưa thu tiền   |
-| 11  | Reading gắn với Room, dùng tiếp khi Lease mới                  | Công tơ thuộc phòng, không thuộc Tenant       |
-| 12  | Skip anomaly warning ở MVP                                     | Tránh over-engineering, v1.x add              |
+| #   | Decision                                                     | Lý do                                          |
+| --- | ------------------------------------------------------------ | ---------------------------------------------- |
+| 1   | Point-in-time schema: 1 record = 1 reading                   | Single source of truth, consumption computed   |
+| 2   | Chỉ Landlord nhập reading ở MVP                              | Tránh chaos khi Tenant nhập không đồng đều     |
+| 3   | Manual Invoice trigger sau khi có reading (Pattern Y.2)      | Invoice luôn sinh ra đầy đủ, không half-baked  |
+| 4   | Batch nhập reading cho toàn Property (1 form duy nhất)       | Match workflow thực tế của Landlord            |
+| 5   | Reminder ngày 5 hàng tháng nếu chưa xuất Invoice             | Tránh quên, giữ tính nhẹ nhàng                 |
+| 6   | Validate `reading_value >= previous_value`                   | Case thực tế không có reset, giữ rule đơn giản |
+| 7   | `room_id` nullable: NULL = shared meter, có value = per-room | Gắn với scope của Service                      |
+| 8   | Shared meter `applied_rooms` fix ở Service, không chọn lại   | Config 1 lần khi tạo Service                   |
+| 9   | Auto-fill previous reading trong form                        | UX tốt, tránh nhập sai số cũ                   |
+| 10  | Reading mutable khi Invoice reference chưa có Payment        | Match case thực tế nhập sai + chưa thu tiền    |
+| 11  | Reading gắn với Room, dùng tiếp khi Lease mới                | Công tơ thuộc phòng, không thuộc Tenant        |
+| 12  | Skip anomaly warning ở MVP                                   | Tránh over-engineering, v1.x add               |
 
 ## Personas liên quan
 
@@ -61,6 +61,7 @@ Meter Reading **mô tả sự thật vật lý tại 1 thời điểm** (đồng
 lúc Y). Sự thật quá khứ không đổi. Đây là **event**, append-only bản chất.
 
 Hệ quả:
+
 - 1 record = 1 reading (point-in-time)
 - Consumption = reading(now) - reading(previous) — **computed**, không lưu
 - "Sửa reading" chỉ được phép khi chưa có downstream consequence (Invoice
@@ -68,10 +69,10 @@ Hệ quả:
 
 ### Reading gắn với gì?
 
-| Service scope      | Reading gắn với           | `room_id` |
-| ------------------ | ------------------------- | --------- |
-| `all_rooms`        | Room cụ thể (1 công tơ/Room) | NOT NULL  |
-| `selected_rooms`   | Service (1 công tơ chung)  | NULL      |
+| Service scope    | Reading gắn với              | `room_id` |
+| ---------------- | ---------------------------- | --------- |
+| `all_rooms`      | Room cụ thể (1 công tơ/Room) | NOT NULL  |
+| `selected_rooms` | Service (1 công tơ chung)    | NULL      |
 
 ### Lifecycle của 1 Reading
 
@@ -140,7 +141,7 @@ selected_rooms per_meter)
 - AC6 cho phép skip vì thực tế Landlord có thể:
   - Chưa đến tháng mới, chưa đọc số
   - Tạo Service trước, tháng sau mới đi đọc
-  → Ép nhập ngay sẽ làm friction. Cho skip, nhưng warn ở lần nhập đầu tiên.
+    → Ép nhập ngay sẽ làm friction. Cho skip, nhưng warn ở lần nhập đầu tiên.
 
 - Logic khi nhập reading lần đầu mà không có initial reading (AC6 skip):
   - Treat số đầu tiên nhập như initial
@@ -279,23 +280,17 @@ selected_rooms per_meter)
     tháng sau."
 - [ ] AC3: Form sửa cho phép edit: `reading_value`, `reading_date`
 - [ ] AC4: Validation như US-071 AC4 (warn nếu < previous, không block)
-- [ ] AC5: **Case 2 dialog confirm trước khi submit:**
-  ```
-  "Chỉ số này đang được dùng cho Invoice #[X] tháng [Y] (chưa thanh toán).
-   Khi sửa, Invoice sẽ được:
-   
-   [A] Rebuild lại theo chỉ số mới (recommend)
-       → Invoice cập nhật total, gửi lại cho Tenant
-   
-   [B] Giữ Invoice cũ, không đổi
-       → Chỉ sửa reading, Invoice vẫn tính theo số cũ"
-  ```
-  - Default = [A]
-  - Landlord chọn → submit
-- [ ] AC6: Submit:
-  - Update MeterReading record
-  - Nếu chọn [A]: trigger rebuild Invoice (logic detail ở Nhóm 7)
-  - Nếu chọn [B]: chỉ update reading, Invoice không đổi (edge case)
+- [ ] AC5: **Case 2 warning trước khi submit:**
+      "Chỉ số này đang được dùng cho Invoice #[X] tháng [Y] (chưa thanh toán).
+      Khi sửa chỉ số, Invoice #[X] sẽ KHÔNG tự cập nhật.
+      Nếu bạn muốn Tenant thấy Invoice đúng với chỉ số mới:
+
+Sửa chỉ số (bước hiện tại)
+Vào Invoice #[X] → Void Invoice
+Xuất Invoice mới cho tháng đó"
+
+- Landlord chọn "Tôi hiểu, tiếp tục sửa" → submit
+- [ ] AC6: Submit → update MeterReading record. KHÔNG tự động touch Invoice.
 - [ ] AC7: Sau submit → toast message + redirect về trang lịch sử reading
 - [ ] AC8: Chỉ Landlord sở hữu thực hiện được
 
@@ -476,10 +471,10 @@ WHERE service_id = ? AND (room_id = ? OR (room_id IS NULL AND ? IS NULL))
 ORDER BY reading_date DESC LIMIT 1;
 
 -- Danh sách reading cần nhập tháng N cho Property
-SELECT s.*, r.* 
+SELECT s.*, r.*
 FROM service s
 LEFT JOIN room r ON r.property_id = s.property_id
-WHERE s.billing_type = 'per_meter' 
+WHERE s.billing_type = 'per_meter'
   AND s.is_active = true
   AND s.property_id = ?;
 
@@ -499,14 +494,14 @@ Sẽ finalize ở Phase 3 (Architecture + Database Design).
 
 ## Summary
 
-| Story  | Title                                                 | Priority | Estimate |
-| ------ | ----------------------------------------------------- | -------- | -------- |
-| US-070 | Landlord nhập initial reading khi tạo Service per_meter | Must   | M        |
-| US-071 | Landlord nhập reading định kỳ (batch per Property)    | Must     | L        |
-| US-072 | Landlord xem lịch sử reading                          | Must     | S        |
-| US-073 | Landlord sửa reading (với điều kiện)                  | Should   | M        |
-| US-074 | Dashboard reminder — chưa xuất Invoice tháng này      | Should   | S        |
-| US-075 | Tenant xem consumption của phòng mình                 | Should   | S        |
+| Story  | Title                                                   | Priority | Estimate |
+| ------ | ------------------------------------------------------- | -------- | -------- |
+| US-070 | Landlord nhập initial reading khi tạo Service per_meter | Must     | M        |
+| US-071 | Landlord nhập reading định kỳ (batch per Property)      | Must     | L        |
+| US-072 | Landlord xem lịch sử reading                            | Must     | S        |
+| US-073 | Landlord sửa reading (với điều kiện)                    | Should   | M        |
+| US-074 | Dashboard reminder — chưa xuất Invoice tháng này        | Should   | S        |
+| US-075 | Tenant xem consumption của phòng mình                   | Should   | S        |
 
 **Total**: 6 stories (3 Must + 3 Should).
 **Estimate**: 1L + 2M + 3S ≈ 1–1.5 sprint.
