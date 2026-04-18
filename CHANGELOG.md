@@ -43,28 +43,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `glossary.md`: Added Occupant, billing_type, Service scope,
   full status enums for Room/Lease/Tenant/Invoice/Deposit
 
-## [0.4.0] – 2026-04-18 — Phase 2: Requirements (Nhóm 5) DRAFT
-
-### Added
-
-- **Nhóm 5: Service** (`docs/01-requirements/05-service.md`)
-  - 7 user stories (US-060 → US-066)
-  - 3 billing types: per_meter / per_person / fixed
-  - Service scope: all_rooms (default) / selected_rooms (cho công tơ chung)
-  - Shared per_meter chia theo số người các phòng trong scope
-  - Toggle is_active thay cho hard/soft delete
-  - Unit auto theo billing_type (chỉ per_meter mới nhập)
-
-### Decisions
-
-- Service là template, không phải entity sống
-- Invoice Immutability Pattern: Invoice snapshot giá tại thời điểm tạo,
-  Service đổi sau không ảnh hưởng Invoice cũ
-- Service config ở Property-level (không có Room-level)
-- Không per-Lease override ở MVP
-- Không đổi giá giữa kỳ (áp dụng từ tháng sau)
-- Phòng trống trong shared meter không chịu phí
-
 ## [0.3.0] – 2026-04-17 — Phase 2: Requirements (Nhóm 1-4) DRAFT
 
 ### Added
@@ -115,10 +93,53 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Terminate và settle deposit tách 2 step riêng (cho flow thực tế linh hoạt)
 - Auto-archive Tenant khi settle deposit xong (cầu nối Lease ↔ Tenant lifecycle)
 
+## [0.4.0] – 2026-04-18 — Phase 2: Requirements (Nhóm 5) DRAFT
+
+### Added
+
+- **Nhóm 5: Service** (`docs/01-requirements/05-service.md`)
+  - 7 user stories (US-060 → US-066)
+  - 3 billing types: per_meter / per_person / fixed
+  - Service scope: all_rooms (default) / selected_rooms (cho công tơ chung)
+  - Shared per_meter chia theo số người các phòng trong scope
+  - Toggle is_active thay cho hard/soft delete
+  - Unit auto theo billing_type (chỉ per_meter mới nhập)
+
+### Decisions
+
+- Service là template, không phải entity sống
+- Invoice Immutability Pattern: Invoice snapshot giá tại thời điểm tạo,
+  Service đổi sau không ảnh hưởng Invoice cũ
+- Service config ở Property-level (không có Room-level)
+- Không per-Lease override ở MVP
+- Không đổi giá giữa kỳ (áp dụng từ tháng sau)
+- Phòng trống trong shared meter không chịu phí
+
+## [0.5.0] – 2026-04-18 — Phase 2: Requirements (Nhóm 6) DRAFT
+
+### Added
+
+- **Nhóm 6: Meter Reading** (`docs/01-requirements/06-meter-reading.md`)
+  - 6 user stories (US-070 → US-075)
+  - Point-in-time schema: 1 record = 1 reading
+  - Batch nhập reading per Property (Pattern Y.2)
+  - Reading mutable khi Invoice reference chưa có Payment
+  - Reminder ngày 5 hàng tháng nếu chưa xuất Invoice
+  - room_id nullable (null = shared meter, có value = per-room)
+
+### Decisions
+
+- Reading là domain event, append-only bản chất
+- Manual Invoice trigger (không cron auto-generate)
+- Task-oriented UI: batch form theo workflow, không per-entity
+- Validate `reading_value >= previous_value`, warn không block
+- Auto-fill previous reading từ reading trước
+- Shared meter applied_rooms fix ở Service, không chọn lại khi nhập
+
 ### Total
 
-- 36 user stories / ~55 dự kiến cho toàn MVP
-- 4/8 nhóm hoàn thành draft
+- 49 user stories / ~55 dự kiến cho toàn MVP
+- 6/8 nhóm hoàn thành draft
 
 ## [0.1.0] – 2026-04-17 — Phase 1: Vision & Scope APPROVED
 
