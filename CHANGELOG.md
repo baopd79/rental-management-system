@@ -209,6 +209,224 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MVP roles = 2 (Landlord + Tenant), thiết kế mở để mở rộng
 - Persona D (cho thuê nguyên căn) → v2.x, implement qua property type
 - Notification → v1.x, MVP dùng Zalo để nhắc
+## [Unreleased]
+
+### Added — Phase 3: Architecture & Database Design (2026-04-18)
+
+**Architecture Decision Records:**
+
+- `docs/decisions/ADR-0001-lifecycle-field-naming.md` (v2 post-review)
+  3 pattern rõ ràng cho lifecycle fields: soft delete (`is_archived` +
+  `archived_at`), feature toggle (`is_active`), domain event timestamp
+  (`terminated_at`, `voided_at`, `revoked_at`). Options considered với
+  lý do reject Option 1 và Option 3. 6 rules cho dev bao gồm no-mix
+  pattern, no `deleted_at`, API không expose lifecycle fields, partial
+  index migration convention.
+
+- `docs/decisions/ADR-0002-cron-architecture.md`
+  APScheduler in-process (không cần Redis/Celery ở MVP). 4 tasks:
+  `check_lease_status` (00:05), `send_invoice_reminder` (ngày 5 08:00),
+  `cleanup_expired_tokens` (02:00), `anonymize_old_tenants` (03:00).
+  Timezone Asia/Ho_Chi_Minh. Idempotency requirement.
+
+- `docs/decisions/ADR-0003-audit-log.md`
+  Application-level audit table trong same DB. Scope: critical entities
+  (lease, invoice, payment, room, tenant, service, user). Pattern:
+  `before`/`after` JSONB partial snapshot. Ghi trong cùng transaction
+  với main operation. Retention 10 năm.
+
+- `docs/decisions/ADR-0004-notification-framework.md`
+  Event-driven với handler pattern. MVP: InAppHandler (DB-backed).
+  v1.x: thêm EmailHandler, ZaloOAHandler mà không sửa business logic.
+  5 event keys. Retention 90 ngày.
+
+- `docs/decisions/ADR-0005-rbac-strategy.md`
+  Permission-based RBAC. Permission string dạng `resource:action`.
+  Permissions lưu in-code (không lưu DB). Tách 2 tầng: permission check
+  (middleware) + ownership check (service layer). MVP: 1 user = 1 role.
+  404 thay vì 403 cho ownership violation.
+
+- `docs/decisions/ADR-0006-data-retention.md`
+  PII Tenant: giữ full khi active, anonymize sau 5 năm khi archived.
+  Invoice/Payment/Audit log: giữ 10 năm (luật kế toán VN). Tokens:
+  xóa sau TTL. Consent timestamp `users.consent_at`. Cần review pháp
+  lý trước production.
+
+**Architecture Diagram:**
+
+- `docs/02-architecture/architecture-diagram.svg`
+  Three-tier: Web Client → FastAPI backend → PostgreSQL, tất cả wrapped
+  trong Docker Compose. FastAPI có 5 internal layer: Auth middleware,
+  Service layer, APScheduler, Notification service, Repository.
+
+**Entity Relationship Diagram:**
+
+- `docs/03-database/erd.mmd` (Mermaid source, v2 post-review)
+- `docs/03-database/erd-reference.md` (companion doc)
+
+  17 bảng: `users`, `invite_tokens`, `password_reset_tokens`,
+  `refresh_tokens`, `properties`, `rooms`, `tenants`, `occupants`,
+  `leases`, `services`, `service_rooms`, `meter_readings`, `invoices`,
+  `invoice_line_items`, `payments`, `audit_logs`, `notifications`.
+
+  Đặc trưng:
+  - 6 partial unique indexes (unique scope WHERE active)
+  - Snapshot pattern cho immutability: `leases.rent_amount`,
+    `leases.billing_day`, `invoice_line_items.*`
+  - Computed status (không lưu DB) cho Room, Lease, Tenant, Invoice
+  - Denormalization chọn lọc: `landlord_id` trên `invoices` và
+    `audit_logs`
+  - JSONB cho audit log payload
+
+### Changed — Post-review fixes (2026-04-18)
+
+Cross-check ERD v1 với user stories gốc Phase 2 (file `03-tenant.md`
+và `07-invoice.md`) tìm ra 9 vấn đề, đã fix:
+
+**Missing fields added:**
+- `users`: `full_name`, `phone` (Landlord profile, nullable)
+- `tenants`: `hometown`, `note`, `move_out_date`
+- `occupants`: `moved_in_date`, `moved_out_date`, `note`
+- `rooms`: `max_occupants`
+- `invoices`: `void_note`, `voided_by_user_id`, `created_by_user_id`
+- `invoice_line_items`: `unit`
+
+**Field type changed:**
+- `invoices.voided_reason`: `text` → `enum` với 6 giá trị
+  (`wrong_meter_reading`, `wrong_rent`, `wrong_service_config`,
+  `tenant_dispute`, `duplicate`, `other`)
+
+**Field renamed** (match Phase 2 US naming):
+- `tenants.id_number` → `tenants.id_card_number`
+- `tenants.date_of_birth` → `tenants.birth_date`
+- `occupants.id_number` → `occupants.id_card_number`
+- `occupants.date_of_birth` → `occupants.birth_date`
+
+**Phase 2 overrides** (documented trong `erd-reference.md` §10):
+- US-036 Promote Occupant: giữ Phase 3 decision (Cách 2 — keep với
+  trace), update US-036 để mark thay vì delete
+- US-030 Reactivation: relax Phase 3 decision, support cả flow A
+  (unarchive Tenant cũ) và flow B (create new) như US yêu cầu
+
+---
+
+### Added — Phase 3: Architecture & Database Design (2026-04-18)
+
+**Architecture Decision Records:**
+
+- `docs/decisions/ADR-0001-lifecycle-field-naming.md` (v2 post-review)
+  3 pattern rõ ràng cho lifecycle fields: soft delete (`is_archived` +
+  `archived_at`), feature toggle (`is_active`), domain event timestamp
+  (`terminated_at`, `voided_at`, `revoked_at`). Options considered với
+  lý do reject Option 1 và Option 3. 6 rules cho dev bao gồm no-mix
+  pattern, no `deleted_at`, API không expose lifecycle fields, partial
+  index migration convention.
+
+- `docs/decisions/ADR-0002-cron-architecture.md`
+  APScheduler in-process (không cần Redis/Celery ở MVP). 4 tasks:
+  `check_lease_status` (00:05), `send_invoice_reminder` (ngày 5 08:00),
+  `cleanup_expired_tokens` (02:00), `anonymize_old_tenants` (03:00).
+  Timezone Asia/Ho_Chi_Minh. Idempotency requirement.
+
+- `docs/decisions/ADR-0003-audit-log.md`
+  Application-level audit table trong same DB. Scope: critical entities
+  (lease, invoice, payment, room, tenant, service, user). Pattern:
+  `before`/`after` JSONB partial snapshot. Ghi trong cùng transaction
+  với main operation. Retention 10 năm.
+
+- `docs/decisions/ADR-0004-notification-framework.md`
+  Event-driven với handler pattern. MVP: InAppHandler (DB-backed).
+  v1.x: thêm EmailHandler, ZaloOAHandler mà không sửa business logic.
+  5 event keys. Retention 90 ngày.
+
+- `docs/decisions/ADR-0005-rbac-strategy.md`
+  Permission-based RBAC. Permission string dạng `resource:action`.
+  Permissions lưu in-code (không lưu DB). Tách 2 tầng: permission check
+  (middleware) + ownership check (service layer). MVP: 1 user = 1 role.
+  404 thay vì 403 cho ownership violation.
+
+- `docs/decisions/ADR-0006-data-retention.md`
+  PII Tenant: giữ full khi active, anonymize sau 5 năm khi archived.
+  Invoice/Payment/Audit log: giữ 10 năm (luật kế toán VN). Tokens:
+  xóa sau TTL. Consent timestamp `users.consent_at`. Cần review pháp
+  lý trước production.
+
+**Architecture Diagram:**
+
+- `docs/02-architecture/architecture-diagram.svg`
+  Three-tier: Web Client → FastAPI backend → PostgreSQL, tất cả wrapped
+  trong Docker Compose. FastAPI có 5 internal layer: Auth middleware,
+  Service layer, APScheduler, Notification service, Repository.
+
+**Entity Relationship Diagram:**
+
+- `docs/03-database/erd.mmd` (Mermaid source, v2 post-review)
+- `docs/03-database/erd-reference.md` (companion doc)
+
+  17 bảng: `users`, `invite_tokens`, `password_reset_tokens`,
+  `refresh_tokens`, `properties`, `rooms`, `tenants`, `occupants`,
+  `leases`, `services`, `service_rooms`, `meter_readings`, `invoices`,
+  `invoice_line_items`, `payments`, `audit_logs`, `notifications`.
+
+  Đặc trưng:
+  - 6 partial unique indexes (unique scope WHERE active)
+  - Snapshot pattern cho immutability: `leases.rent_amount`,
+    `leases.billing_day`, `invoice_line_items.*`
+  - Computed status (không lưu DB) cho Room, Lease, Tenant, Invoice
+  - Denormalization chọn lọc: `landlord_id` trên `invoices` và
+    `audit_logs`
+  - JSONB cho audit log payload
+
+### Changed — Post-review fixes (2026-04-18)
+
+Cross-check ERD v1 với user stories gốc Phase 2 (file `03-tenant.md`
+và `07-invoice.md`) tìm ra 9 vấn đề, đã fix:
+
+**Missing fields added:**
+- `users`: `full_name`, `phone` (Landlord profile, nullable)
+- `tenants`: `hometown`, `note`, `move_out_date`
+- `occupants`: `moved_in_date`, `moved_out_date`, `note`
+- `rooms`: `max_occupants`
+- `invoices`: `void_note`, `voided_by_user_id`, `created_by_user_id`
+- `invoice_line_items`: `unit`
+
+**Field type changed:**
+- `invoices.voided_reason`: `text` → `enum` với 6 giá trị
+  (`wrong_meter_reading`, `wrong_rent`, `wrong_service_config`,
+  `tenant_dispute`, `duplicate`, `other`)
+
+**Field renamed** (match Phase 2 US naming):
+- `tenants.id_number` → `tenants.id_card_number`
+- `tenants.date_of_birth` → `tenants.birth_date`
+- `occupants.id_number` → `occupants.id_card_number`
+- `occupants.date_of_birth` → `occupants.birth_date`
+
+**Phase 2 overrides** (documented trong `erd-reference.md` §10):
+- US-036 Promote Occupant: giữ Phase 3 decision (Cách 2 — keep với
+  trace), update US-036 để mark thay vì delete
+- US-030 Reactivation: relax Phase 3 decision, support cả flow A
+  (unarchive Tenant cũ) và flow B (create new) như US yêu cầu
+
+---
+
+## [Unreleased — Phase 2: Requirements] (2026-04-18)
+
+### Added
+- 8 requirement groups hoàn chỉnh (63 user stories: 42 Must + 17 Should + 4 Could)
+- `docs/01-requirements/01-auth-rbac.md`
+- `docs/01-requirements/02-property-room.md`
+- `docs/01-requirements/03-tenant.md`
+- `docs/01-requirements/04-lease.md`
+- `docs/01-requirements/05-service.md`
+- `docs/01-requirements/06-meter-reading.md`
+- `docs/01-requirements/07-invoice.md`
+- `docs/01-requirements/08-payment.md`
+- `docs/01-requirements/PHASE2-REVIEW.md` — Gate Review
+- `docs/01-requirements/PHASE2-REVIEW-PATCHES.md` — Applied patches
+- `docs/00-overview/glossary.md` — Glossary đầy đủ
+- `PHASE2-SUMMARY.md` — Context seed cho Phase 3
+
+---
 
 ## [0.0.1] – 2026-04-16
 

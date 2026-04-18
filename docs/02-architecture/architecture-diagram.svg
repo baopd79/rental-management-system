@@ -1,0 +1,139 @@
+<svg width="100%" viewBox="0 0 680 432" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>RMS system architecture</title>
+<desc>Three-tier architecture: web client connects via HTTPS to FastAPI backend running inside Docker Compose, with five internal layers (auth middleware, service layer, APScheduler cron, notification service, repository). Repository connects via SQL to PostgreSQL database, also inside Docker Compose.</desc>
+
+<defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #3d3d3a; }
+    .th  { font-size: 14px; font-weight: 500; fill: #3d3d3a; }
+    .ts  { font-size: 12px; font-weight: 400; fill: #73726c; }
+
+    /* c-gray */
+    g.c-gray > rect, g.c-gray > circle { fill: #F1EFE8; stroke: #5F5E5A; }
+    g.c-gray > text.th { fill: #444441; }
+    g.c-gray > text.ts { fill: #5F5E5A; }
+
+    /* c-purple */
+    g.c-purple > rect { fill: #EEEDFE; stroke: #534AB7; }
+    g.c-purple > text.th { fill: #3C3489; }
+    g.c-purple > text.ts { fill: #534AB7; }
+
+    /* c-amber */
+    g.c-amber > rect { fill: #FAEEDA; stroke: #BA7517; }
+    g.c-amber > text.th { fill: #633806; }
+    g.c-amber > text.ts { fill: #854F0B; }
+
+    /* c-teal */
+    g.c-teal > rect  { fill: #E1F5EE; stroke: #0F6E56; }
+    g.c-teal > line  { stroke: #0F6E56; }
+    g.c-teal > text.th { fill: #085041; }
+    g.c-teal > text.ts { fill: #0F6E56; }
+
+    /* box (neutral) */
+    g.box > rect { fill: #f5f5f3; stroke: #B4B2A9; }
+
+    /* arr */
+    line.arr { stroke: #73726c; stroke-width: 1.5; fill: none; }
+  </style>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Web client -->
+<g class="c-gray">
+  <rect x="120" y="16" width="150" height="42" rx="8" stroke-width="0.5"/>
+  <text class="th" x="195" y="37" text-anchor="middle" dominant-baseline="central">Web client</text>
+</g>
+
+<!-- Zalo external (manual, dashed) -->
+<rect x="420" y="16" width="170" height="42" rx="8" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text class="ts" x="505" y="31" text-anchor="middle" dominant-baseline="central" opacity="0.55">Zalo (manual)</text>
+<text class="ts" x="505" y="47" text-anchor="middle" dominant-baseline="central" opacity="0.55">v1.x → Zalo OA</text>
+
+<!-- Landlord connecting label -->
+<text class="ts" x="350" y="37" text-anchor="middle" dominant-baseline="central" opacity="0.4">Landlord</text>
+<line x1="270" y1="37" x2="330" y2="37" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="3 3"/>
+<line x1="370" y1="37" x2="418" y2="37" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="3 3"/>
+
+<!-- HTTPS arrow -->
+<line x1="195" y1="58" x2="195" y2="102" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="208" y="82" dominant-baseline="central">HTTPS</text>
+
+<!-- Docker Compose boundary -->
+<rect x="38" y="88" width="604" height="318" rx="6" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="6 4"/>
+<text class="ts" x="50" y="102" dominant-baseline="central" opacity="0.6">Docker Compose</text>
+
+<!-- FastAPI outer container -->
+<g class="c-purple">
+  <rect x="54" y="100" width="346" height="288" rx="10" stroke-width="0.5"/>
+  <text class="th" x="227" y="120" text-anchor="middle" dominant-baseline="central">FastAPI · backend</text>
+  <text class="ts" x="227" y="136" text-anchor="middle" dominant-baseline="central">Python 3.12 · Uvicorn</text>
+</g>
+
+<!-- Auth middleware -->
+<g class="box">
+  <rect x="70" y="147" width="314" height="46" rx="6" stroke-width="0.5"/>
+  <text class="th" x="227" y="164" text-anchor="middle" dominant-baseline="central">Auth middleware</text>
+  <text class="ts" x="227" y="180" text-anchor="middle" dominant-baseline="central">JWT decode · RBAC · permission check (ADR-0005)</text>
+</g>
+
+<!-- Service layer -->
+<g class="box">
+  <rect x="70" y="205" width="146" height="68" rx="6" stroke-width="0.5"/>
+  <text class="th" x="143" y="228" text-anchor="middle" dominant-baseline="central">Service layer</text>
+  <text class="ts" x="143" y="245" text-anchor="middle" dominant-baseline="central">Business logic</text>
+  <text class="ts" x="143" y="261" text-anchor="middle" dominant-baseline="central">Ownership checks</text>
+</g>
+
+<!-- APScheduler -->
+<g class="c-amber">
+  <rect x="226" y="205" width="152" height="68" rx="6" stroke-width="0.5"/>
+  <text class="th" x="302" y="228" text-anchor="middle" dominant-baseline="central">APScheduler</text>
+  <text class="ts" x="302" y="245" text-anchor="middle" dominant-baseline="central">Daily cron tasks</text>
+  <text class="ts" x="302" y="261" text-anchor="middle" dominant-baseline="central">In-process (ADR-0002)</text>
+</g>
+
+<!-- Notification service -->
+<g class="c-teal">
+  <rect x="70" y="285" width="146" height="56" rx="6" stroke-width="0.5"/>
+  <text class="th" x="143" y="308" text-anchor="middle" dominant-baseline="central">Notifications</text>
+  <text class="ts" x="143" y="325" text-anchor="middle" dominant-baseline="central">In-app channel (ADR-0004)</text>
+</g>
+
+<!-- Repository layer -->
+<g class="box">
+  <rect x="226" y="285" width="152" height="56" rx="6" stroke-width="0.5"/>
+  <text class="th" x="302" y="308" text-anchor="middle" dominant-baseline="central">Repository</text>
+  <text class="ts" x="302" y="325" text-anchor="middle" dominant-baseline="central">SQLModel + queries</text>
+</g>
+
+<!-- SQL arrow -->
+<line x1="378" y1="313" x2="422" y2="313" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="400" y="305" text-anchor="middle">SQL</text>
+
+<!-- PostgreSQL container -->
+<g class="c-teal">
+  <rect x="422" y="100" width="202" height="288" rx="10" stroke-width="0.5"/>
+  <text class="th" x="523" y="120" text-anchor="middle" dominant-baseline="central">PostgreSQL 16</text>
+  <text class="ts" x="523" y="136" text-anchor="middle" dominant-baseline="central">Alembic migrations</text>
+  <line x1="438" y1="148" x2="608" y2="148" stroke-width="0.5"/>
+  <text class="ts" x="523" y="170" text-anchor="middle" dominant-baseline="central">users · tokens</text>
+  <text class="ts" x="523" y="198" text-anchor="middle" dominant-baseline="central">properties · rooms</text>
+  <text class="ts" x="523" y="226" text-anchor="middle" dominant-baseline="central">leases · tenants · occupants</text>
+  <text class="ts" x="523" y="254" text-anchor="middle" dominant-baseline="central">services · meter_readings</text>
+  <text class="ts" x="523" y="282" text-anchor="middle" dominant-baseline="central">invoices · line_items</text>
+  <text class="ts" x="523" y="310" text-anchor="middle" dominant-baseline="central">payments · audit_logs</text>
+  <text class="ts" x="523" y="338" text-anchor="middle" dominant-baseline="central">notifications</text>
+</g>
+
+<!-- Legend -->
+<rect x="38" y="414" width="12" height="12" rx="2" fill="#f5f5f3" stroke="#B4B2A9" stroke-width="0.5"/>
+<text class="ts" x="55" y="420" dominant-baseline="central" opacity="0.7">Neutral layer</text>
+<rect x="130" y="414" width="12" height="12" rx="2" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+<text class="ts" x="147" y="420" dominant-baseline="central" opacity="0.7">Background job</text>
+<rect x="250" y="414" width="12" height="12" rx="2" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text class="ts" x="267" y="420" dominant-baseline="central" opacity="0.7">Data layer</text>
+<rect x="340" y="414" width="12" height="12" rx="2" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text class="ts" x="357" y="420" dominant-baseline="central" opacity="0.7">Backend container</text>
+</svg>

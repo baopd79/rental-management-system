@@ -1,0 +1,265 @@
+erDiagram
+    users ||--o{ properties : "owns (landlord)"
+    users ||--o| tenants : "links to (user_id)"
+    users ||--o{ tenants : "manages (landlord_id)"
+    users ||--o{ invite_tokens : "created_by"
+    users ||--o{ password_reset_tokens : "for"
+    users ||--o{ refresh_tokens : "for"
+
+    properties ||--o{ rooms : "contains"
+    properties ||--o{ services : "has"
+
+    rooms ||--o{ leases : "rented via"
+    rooms ||--o{ service_rooms : "scoped_to"
+    rooms ||--o{ meter_readings : "read_at"
+
+    tenants ||--o{ occupants : "has"
+    tenants ||--o{ leases : "signs"
+    tenants ||--o{ invite_tokens : "invited_as"
+    tenants ||--o| occupants : "promoted_from"
+
+    leases ||--o{ invoices : "billed_via"
+
+    services ||--o{ service_rooms : "applies_to"
+    services ||--o{ meter_readings : "recorded_for"
+    services ||--o{ invoice_line_items : "charges"
+
+    meter_readings ||--o{ invoice_line_items : "consumed_as_start"
+    meter_readings ||--o{ invoice_line_items : "consumed_as_end"
+
+    invoices ||--o{ invoice_line_items : "contains"
+    invoices ||--o{ payments : "received"
+
+    users ||--o{ invoices : "created_by / voided_by"
+    users ||--o{ payments : "recorded_by"
+    users ||--o{ meter_readings : "created_by"
+    users ||--o{ audit_logs : "performed_by"
+    users ||--o{ notifications : "delivered_to"
+
+    users {
+        uuid id PK
+        string email UK
+        string password_hash
+        enum role "landlord|tenant"
+        bool is_active
+        string full_name "nullable, Landlord profile"
+        string phone "nullable, Landlord profile"
+        timestamptz consent_at "nullable"
+        timestamptz last_login_at "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    invite_tokens {
+        uuid id PK
+        string token_hash UK
+        uuid tenant_id FK
+        string invited_email
+        uuid created_by_user_id FK
+        timestamptz expires_at "TTL 7d"
+        timestamptz used_at "nullable"
+        timestamptz created_at
+    }
+
+    password_reset_tokens {
+        uuid id PK
+        string token_hash UK
+        uuid user_id FK
+        timestamptz expires_at "TTL 1h"
+        timestamptz used_at "nullable"
+        timestamptz created_at
+    }
+
+    refresh_tokens {
+        uuid id PK
+        string token_hash UK
+        uuid user_id FK
+        timestamptz expires_at "TTL 7d"
+        timestamptz revoked_at "nullable"
+        uuid rotated_to_id FK "self-ref nullable"
+        timestamptz created_at
+    }
+
+    properties {
+        uuid id PK
+        uuid landlord_id FK
+        string name
+        string address "nullable free text"
+        int billing_day "CHECK 1-28 template"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    rooms {
+        uuid id PK
+        uuid property_id FK
+        string display_name "unique per property WHERE NOT archived"
+        decimal default_rent "nullable"
+        text description "nullable"
+        int max_occupants "nullable, NULL = unlimited"
+        bool is_archived
+        timestamptz archived_at "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    tenants {
+        uuid id PK
+        uuid user_id FK "nullable 1-1 with users"
+        uuid landlord_id FK "scope for unique constraints"
+        uuid promoted_from_occupant_id FK "nullable US-036 trace"
+        string full_name "PII"
+        string phone "PII unique per landlord WHERE active"
+        string email "PII nullable unique per landlord WHERE active"
+        string id_card_number "PII nullable CCCD CMND max 12"
+        date birth_date "nullable"
+        string hometown "nullable free text"
+        text note "nullable Landlord internal note"
+        date move_out_date "nullable physical moved-out date"
+        bool is_archived
+        timestamptz archived_at "nullable system event"
+        timestamptz anonymized_at "nullable ADR-0006"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    occupants {
+        uuid id PK
+        uuid tenant_id FK
+        string full_name "PII"
+        string phone "PII nullable"
+        string id_card_number "PII nullable"
+        date birth_date "nullable"
+        string relationship "nullable free text"
+        date moved_in_date "NOT NULL default today"
+        date moved_out_date "nullable NULL = still here"
+        text note "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    leases {
+        uuid id PK
+        uuid room_id FK
+        uuid tenant_id FK
+        date start_date
+        date end_date "CHECK >= start_date"
+        timestamptz terminated_at "nullable event"
+        text terminated_reason "nullable"
+        decimal rent_amount "snapshot immutable"
+        decimal deposit_amount "snapshot >= 0"
+        enum deposit_status "held|returned|forfeited|deducted"
+        timestamptz deposit_settled_at "nullable"
+        text deposit_settlement_note "nullable"
+        int billing_day "snapshot CHECK 1-28"
+        text note "mutable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    services {
+        uuid id PK
+        uuid property_id FK
+        string name
+        enum billing_type "per_meter|per_person|fixed"
+        decimal price "CHECK >= 0"
+        string unit "nullable only for per_meter"
+        enum scope "all_rooms|selected_rooms"
+        enum meter_scope "nullable shared|per_room only per_meter"
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    service_rooms {
+        uuid service_id PK_FK
+        uuid room_id PK_FK
+        timestamptz created_at
+    }
+
+    meter_readings {
+        uuid id PK
+        uuid service_id FK "only per_meter services"
+        uuid room_id FK "nullable NULL = shared meter"
+        decimal reading_value "CHECK >= 0"
+        date reading_date
+        text note "nullable"
+        uuid created_by_user_id FK
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    invoices {
+        uuid id PK
+        uuid lease_id FK
+        uuid landlord_id FK "denormalized"
+        uuid created_by_user_id FK
+        string invoice_number "format INV-YYYY-MM-NNN unique per landlord"
+        date billing_month "first day of month"
+        timestamptz issued_at
+        date due_date
+        decimal total_amount "CHECK >= 0 snapshot from lines"
+        timestamptz voided_at "nullable event"
+        enum voided_reason "nullable wrong_meter_reading|wrong_rent|wrong_service_config|tenant_dispute|duplicate|other"
+        text void_note "nullable required if reason=other"
+        uuid voided_by_user_id FK "nullable required if voided"
+        text note "nullable"
+        timestamptz created_at
+    }
+
+    invoice_line_items {
+        uuid id PK
+        uuid invoice_id FK
+        enum line_type "rent|service|adjustment"
+        uuid service_id FK "nullable required if line_type=service"
+        uuid meter_reading_start_id FK "nullable"
+        uuid meter_reading_end_id FK "nullable"
+        string description "human-readable"
+        string unit "nullable kWh m3 nguoi thang"
+        date billing_period_start
+        date billing_period_end "CHECK >= start"
+        decimal quantity "nullable for adjustment"
+        decimal unit_price "nullable for adjustment"
+        decimal amount "negative only if adjustment"
+        int sort_order
+        timestamptz created_at
+    }
+
+    payments {
+        uuid id PK
+        uuid invoice_id FK
+        decimal amount "CHECK > 0"
+        date paid_at "CHECK <= today"
+        enum method "cash|bank_transfer|ewallet|other"
+        string reference "nullable"
+        text note "nullable"
+        uuid recorded_by_user_id FK
+        timestamptz created_at
+    }
+
+    audit_logs {
+        uuid id PK
+        uuid actor_id FK
+        string actor_role "snapshot at event time"
+        uuid landlord_id FK "denormalized"
+        string entity_type
+        uuid entity_id "no FK generic"
+        string action
+        jsonb before "nullable partial snapshot"
+        jsonb after "nullable partial snapshot"
+        text note "nullable"
+        timestamptz created_at
+    }
+
+    notifications {
+        uuid id PK
+        uuid recipient_id FK
+        string event_key
+        string title
+        text body
+        string entity_type "nullable deep link"
+        uuid entity_id "nullable deep link"
+        bool is_read
+        timestamptz read_at "nullable"
+        timestamptz created_at
+    }
