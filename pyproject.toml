@@ -1,0 +1,24 @@
+[project]
+name = "rental-management-system"
+version = "0.1.0"
+description = "RMS"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.4",
+    "fastapi>=0.136.0",
+    "passlib[bcrypt]>=1.7.4",
+    "psycopg[binary]>=3.3.3",
+    "pydantic-settings>=2.13.1",
+    "python-jose[cryptography]>=3.5.0",
+    "sqlmodel>=0.0.38",
+    "uvicorn[standard]>=0.44.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.1",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.11",
+]
