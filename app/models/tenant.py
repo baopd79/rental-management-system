@@ -3,9 +3,11 @@ from datetime import date, datetime
 from uuid import UUID
 
 # third-party
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, SQLModel
 from pydantic import EmailStr
+
 
 # local
 from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin
@@ -80,8 +82,17 @@ class Tenant(TenantBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
     )
     promoted_from_occupant_id: UUID | None = Field(
         default=None,
-        foreign_key="occupants.id",
-        description="Nếu tenant này được promote từ occupant (US-036), link đến occupant cũ, nullable",
+        sa_column=Column(
+            PG_UUID(as_uuid=True),
+            ForeignKey(
+                "occupants.id",
+                use_alter=True,
+                name="fk_tenants_promoted_from_occupant_id_occupants",
+                ondelete="SET NULL",
+            ),
+            nullable=True,
+        ),
+        description="...",
     )
 
 

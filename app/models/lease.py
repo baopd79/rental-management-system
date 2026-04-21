@@ -24,7 +24,7 @@ from sqlalchemy import CheckConstraint, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from app.core.enums import DepositStatus
-from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin, create_pg_enum
 
 
 class LeaseBase(SQLModel):
@@ -117,6 +117,11 @@ class Lease(LeaseBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
 
     # Deposit tracking (state + metadata)
     deposit_status: DepositStatus = Field(
+        sa_column=Column(
+            create_pg_enum(DepositStatus),
+            nullable=False,
+            server_default=DepositStatus.HELD.value,
+        ),
         default=DepositStatus.HELD,
         description="Trạng thái cọc: held/returned/forfeited/deducted",
     )

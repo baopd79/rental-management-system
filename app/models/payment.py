@@ -25,7 +25,7 @@ from sqlalchemy import CheckConstraint
 from sqlmodel import Field, SQLModel
 
 from app.core.enums import PaymentMethod
-from app.db.base import CreatedAtOnlyMixin, UUIDPrimaryKeyMixin
+from app.db.base import CreatedAtOnlyMixin, UUIDPrimaryKeyMixin, create_pg_enum
 
 
 class PaymentBase(SQLModel):
@@ -39,9 +39,10 @@ class PaymentBase(SQLModel):
     )
     paid_at: date = Field(
         description="Ngày thực tế Tenant trả (Landlord ghi nhận hậu kiểm). "
-                    "CHECK <= today (không future date).",
+        "CHECK <= today (không future date).",
     )
     method: PaymentMethod = Field(
+        sa_type=create_pg_enum(PaymentMethod),
         description="cash / bank_transfer / ewallet / other",
     )
     reference: str | None = Field(
@@ -74,7 +75,7 @@ class Payment(PaymentBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     invoice_id: UUID = Field(
         foreign_key="invoices.id",
         description="Invoice được trả. ON DELETE RESTRICT "
-                    "(Payment không CASCADE khi Invoice void).",
+        "(Payment không CASCADE khi Invoice void).",
     )
     recorded_by_user_id: UUID = Field(
         foreign_key="users.id",
@@ -92,6 +93,7 @@ class PaymentCreate(PaymentBase):
     - Invoice not voided
     - amount <= remaining (không overpay)
     """
+
     pass
 
 

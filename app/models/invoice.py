@@ -29,19 +29,20 @@ from sqlalchemy import CheckConstraint, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from app.core.enums import LineType, VoidedReason
-from app.db.base import CreatedAtOnlyMixin, UUIDPrimaryKeyMixin
+from app.db.base import CreatedAtOnlyMixin, UUIDPrimaryKeyMixin, create_pg_enum
 
 
 # ============================================================
 # Invoice
 # ============================================================
 
+
 class InvoiceBase(SQLModel):
     """Shared domain fields cho Invoice."""
 
     billing_month: date = Field(
         description="Ngày 1 của tháng billing (VD: 2026-05-01). "
-                    "CHECK <= current month (không tạo Invoice tương lai).",
+        "CHECK <= current month (không tạo Invoice tương lai).",
     )
     due_date: date = Field(
         description="Hạn thanh toán",
@@ -63,7 +64,7 @@ class Invoice(InvoiceBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
 
     IMMUTABLE fields (set khi tạo, không đổi):
     - lease_id, landlord_id, invoice_number, billing_month, total_amount, due_date
-    
+
     MUTABLE fields:
     - voided_at + voided_reason + void_note + voided_by_user_id (khi void)
     - Payments (thêm Payment → Invoice.status recompute)
@@ -96,7 +97,7 @@ class Invoice(InvoiceBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     landlord_id: UUID = Field(
         foreign_key="users.id",
         description="Denormalized từ lease → room → property → landlord. "
-                    "Simplify unique invoice_number + ownership query (ADR-0005).",
+        "Simplify unique invoice_number + ownership query (ADR-0005).",
     )
     created_by_user_id: UUID = Field(
         foreign_key="users.id",
@@ -106,7 +107,7 @@ class Invoice(InvoiceBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     invoice_number: str = Field(
         max_length=30,
         description="Format 'INV-YYYY-MM-NNN', unique per landlord (partial index "
-                    "WHERE voided_at IS NULL → voided có thể reuse number)",
+        "WHERE voided_at IS NULL → voided có thể reuse number)",
     )
 
     # Void fields (event timestamp pattern)
@@ -116,6 +117,7 @@ class Invoice(InvoiceBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
         description="Event timestamp. NULL = active, NOT NULL = voided",
     )
     voided_reason: VoidedReason | None = Field(
+        sa_type=create_pg_enum(VoidedReason),
         default=None,
         description="Enum 6 giá trị (US-084 AC2). Required when voided_at NOT NULL.",
     )
@@ -175,10 +177,12 @@ class InvoiceVoid(SQLModel):
 # InvoiceLineItem
 # ============================================================
 
+
 class InvoiceLineItemBase(SQLModel):
     """Shared fields cho line item."""
 
     line_type: LineType = Field(
+        sa_type=create_pg_enum(LineType),
         description="rent / service / adjustment",
     )
     description: str = Field(
@@ -212,7 +216,7 @@ class InvoiceLineItemBase(SQLModel):
         max_digits=12,
         decimal_places=2,
         description="Tổng line. Có thể âm CHỈ khi line_type=adjustment. "
-                    "Cho rent/service: amount = quantity × unit_price",
+        "Cho rent/service: amount = quantity × unit_price",
     )
     sort_order: int = Field(
         default=0,
@@ -220,7 +224,9 @@ class InvoiceLineItemBase(SQLModel):
     )
 
 
-class InvoiceLineItem(InvoiceLineItemBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
+class InvoiceLineItem(
+    InvoiceLineItemBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True
+):
     """`invoice_line_items` table.
 
     Line item IMMUTABLE cùng với Invoice (không có updated_at).

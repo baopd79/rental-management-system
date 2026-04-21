@@ -19,11 +19,11 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, Column
 from sqlmodel import Field, SQLModel
 
 from app.core.enums import BillingType, MeterScope, ServiceScope
-from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin, create_pg_enum
 
 
 class ServiceBase(SQLModel):
@@ -34,6 +34,7 @@ class ServiceBase(SQLModel):
         description='Ví dụ: "Điện", "Nước", "Internet", "Rác"',
     )
     billing_type: BillingType = Field(
+        sa_type=create_pg_enum(BillingType),
         description="per_meter/per_person/fixed",
     )
     price: Decimal = Field(
@@ -48,13 +49,19 @@ class ServiceBase(SQLModel):
         description="Đơn vị đo: 'kWh', 'm³', 'khác'. NOT NULL iff billing_type=per_meter",
     )
     scope: ServiceScope = Field(
+        sa_column=Column(
+            create_pg_enum(ServiceScope),
+            nullable=False,
+            server_default=ServiceScope.ALL_ROOMS.value,
+        ),
         default=ServiceScope.ALL_ROOMS,
         description="all_rooms (default) / selected_rooms (dùng junction table)",
     )
     meter_scope: MeterScope | None = Field(
+        sa_type=create_pg_enum(MeterScope),
         default=None,
         description="shared (1 công tơ cho nhóm) / per_room (mỗi phòng 1 công tơ). "
-                    "NOT NULL iff billing_type=per_meter",
+        "NOT NULL iff billing_type=per_meter",
     )
 
 
@@ -92,7 +99,7 @@ class Service(ServiceBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
     is_active: bool = Field(
         default=True,
         description="Landlord có thể tắt tạm thời. Default TRUE khi tạo. "
-                    "Invoice chỉ tính services is_active=True.",
+        "Invoice chỉ tính services is_active=True.",
     )
 
 
@@ -105,6 +112,7 @@ class ServiceCreate(ServiceBase):
     Landlord phải đảm bảo consistency billing_type ↔ unit ↔ meter_scope
     ở UI (Phase 4 validate ở service layer).
     """
+
     pass
 
 

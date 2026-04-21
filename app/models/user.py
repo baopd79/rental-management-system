@@ -16,12 +16,12 @@ from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from app.core.enums import UserRole
-from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin
-
+from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin, create_pg_enum
 
 # ============================================================
 # Base schema — fields shared across all variants
 # ============================================================
+
 
 class UserBase(SQLModel):
     """Shared fields for User (domain info, no auth secrets)."""
@@ -31,6 +31,7 @@ class UserBase(SQLModel):
         description="Dùng để login, unique global",
     )
     role: UserRole = Field(
+        sa_type=create_pg_enum(UserRole),
         sa_column_kwargs={"nullable": False},
         description="ADR-0005: landlord hoặc tenant",
     )
@@ -49,6 +50,7 @@ class UserBase(SQLModel):
 # ============================================================
 # Table model — actual DB table
 # ============================================================
+
 
 class User(UserBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
     """`users` table — auth + profile info."""
@@ -78,6 +80,7 @@ class User(UserBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
 # ============================================================
 # API schemas — input/output variants
 # ============================================================
+
 
 class UserCreate(UserBase):
     """Input schema khi tạo User (internal — qua signup hoặc invite accept).
