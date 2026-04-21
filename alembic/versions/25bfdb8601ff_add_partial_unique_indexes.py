@@ -1,19 +1,21 @@
 """add partial unique indexes
 
-Revision ID: 3644b0dd524b
-Revises: b5e047e8f3c4
-Create Date: 2026-04-21 22:28:45.390677
+Revision ID: 25bfdb8601ff
+Revises: 140877bc29e5
+Create Date: 2026-04-22 02:08:28.034905
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '3644b0dd524b'
-down_revision: Union[str, Sequence[str], None] = 'b5e047e8f3c4'
+revision: str = "25bfdb8601ff"
+down_revision: Union[str, Sequence[str], None] = "140877bc29e5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

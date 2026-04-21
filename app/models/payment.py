@@ -64,11 +64,11 @@ class Payment(PaymentBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     __table_args__ = (
         CheckConstraint(
             "amount > 0",
-            name="ck_payments_amount_strict_positive",
+            name="amount_strict_positive",
         ),
         CheckConstraint(
             "paid_at <= CURRENT_DATE",
-            name="ck_payments_paid_at_not_future",
+            name="paid_at_not_future",
         ),
     )
 

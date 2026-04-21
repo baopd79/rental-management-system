@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: b5e047e8f3c4
+Revision ID: 140877bc29e5
 Revises:
-Create Date: 2026-04-21 21:21:31.235109
+Create Date: 2026-04-22 01:56:48.123643
 
 """
 
@@ -14,7 +14,7 @@ import sqlmodel
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "b5e047e8f3c4"
+revision: str = "140877bc29e5"
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -180,8 +180,7 @@ def upgrade() -> None:
         sa.Column("billing_day", sa.Integer(), nullable=False),
         sa.Column("landlord_id", sa.Uuid(), nullable=False),
         sa.CheckConstraint(
-            "billing_day BETWEEN 1 AND 28",
-            name=op.f("ck_properties_ck_properties_billing_day_range"),
+            "billing_day BETWEEN 1 AND 28", name=op.f("ck_properties_billing_day_range")
         ),
         sa.ForeignKeyConstraint(
             ["landlord_id"], ["users.id"], name=op.f("fk_properties_landlord_id_users")
@@ -380,7 +379,7 @@ def upgrade() -> None:
         sa.Column("archived_at", sa.DateTime(), nullable=True),
         sa.CheckConstraint(
             "max_occupants IS NULL OR max_occupants > 0",
-            name=op.f("ck_rooms_ck_rooms_max_occupants_positive"),
+            name=op.f("ck_rooms_max_occupants_positive"),
         ),
         sa.ForeignKeyConstraint(
             ["property_id"],
@@ -429,11 +428,9 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.CheckConstraint(
             "\n            (billing_type = 'per_meter' AND unit IS NOT NULL AND meter_scope IS NOT NULL)\n            OR\n            (billing_type != 'per_meter' AND unit IS NULL AND meter_scope IS NULL)\n            ",
-            name=op.f("ck_services_ck_services_per_meter_fields_consistency"),
+            name=op.f("ck_services_per_meter_fields_consistency"),
         ),
-        sa.CheckConstraint(
-            "price >= 0", name=op.f("ck_services_ck_services_price_non_negative")
-        ),
+        sa.CheckConstraint("price >= 0", name=op.f("ck_services_price_non_negative")),
         sa.ForeignKeyConstraint(
             ["property_id"],
             ["properties.id"],
@@ -483,17 +480,16 @@ def upgrade() -> None:
             "deposit_settlement_note", sqlmodel.sql.sqltypes.AutoString(), nullable=True
         ),
         sa.CheckConstraint(
-            "billing_day BETWEEN 1 AND 28",
-            name=op.f("ck_leases_ck_leases_billing_day_range"),
+            "billing_day BETWEEN 1 AND 28", name=op.f("ck_leases_billing_day_range")
         ),
         sa.CheckConstraint(
-            "deposit_amount >= 0", name=op.f("ck_leases_ck_leases_deposit_non_negative")
+            "deposit_amount >= 0", name=op.f("ck_leases_deposit_non_negative")
         ),
         sa.CheckConstraint(
-            "end_date >= start_date", name=op.f("ck_leases_ck_leases_end_after_start")
+            "end_date >= start_date", name=op.f("ck_leases_end_after_start")
         ),
         sa.CheckConstraint(
-            "rent_amount >= 0", name=op.f("ck_leases_ck_leases_rent_non_negative")
+            "rent_amount >= 0", name=op.f("ck_leases_rent_non_negative")
         ),
         sa.ForeignKeyConstraint(
             ["room_id"], ["rooms.id"], name=op.f("fk_leases_room_id_rooms")
@@ -527,8 +523,7 @@ def upgrade() -> None:
         sa.Column("room_id", sa.Uuid(), nullable=True),
         sa.Column("created_by_user_id", sa.Uuid(), nullable=False),
         sa.CheckConstraint(
-            "reading_value >= 0",
-            name=op.f("ck_meter_readings_ck_meter_readings_value_non_negative"),
+            "reading_value >= 0", name=op.f("ck_meter_readings_value_non_negative")
         ),
         sa.ForeignKeyConstraint(
             ["created_by_user_id"],
@@ -605,11 +600,15 @@ def upgrade() -> None:
         sa.Column("void_note", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
         sa.Column("voided_by_user_id", sa.Uuid(), nullable=True),
         sa.CheckConstraint(
-            "\n            (voided_at IS NULL AND voided_reason IS NULL AND voided_by_user_id IS NULL)\n            OR\n            (voided_at IS NOT NULL AND voided_reason IS NOT NULL AND voided_by_user_id IS NOT NULL)\n            ",
-            name=op.f("ck_invoices_ck_invoices_void_fields_consistency"),
+            "billing_month <= DATE_TRUNC('month', CURRENT_DATE)",
+            name=op.f("ck_invoices_billing_month_not_future"),
         ),
         sa.CheckConstraint(
-            "total_amount >= 0", name=op.f("ck_invoices_ck_invoices_total_non_negative")
+            "\n            (voided_at IS NULL AND voided_reason IS NULL AND voided_by_user_id IS NULL)\n            OR\n            (voided_at IS NOT NULL AND voided_reason IS NOT NULL AND voided_by_user_id IS NOT NULL)\n            ",
+            name=op.f("ck_invoices_void_fields_consistency"),
+        ),
+        sa.CheckConstraint(
+            "total_amount >= 0", name=op.f("ck_invoices_total_non_negative")
         ),
         sa.ForeignKeyConstraint(
             ["created_by_user_id"],
@@ -661,17 +660,15 @@ def upgrade() -> None:
         sa.Column("meter_reading_end_id", sa.Uuid(), nullable=True),
         sa.CheckConstraint(
             "\n            (line_type = 'service' AND service_id IS NOT NULL)\n            OR\n            (line_type IN ('rent', 'adjustment') AND service_id IS NULL)\n            ",
-            name=op.f("ck_invoice_line_items_ck_line_items_service_id_consistency"),
+            name=op.f("ck_invoice_line_items_service_id_consistency"),
         ),
         sa.CheckConstraint(
             "line_type = 'adjustment' OR amount >= 0",
-            name=op.f(
-                "ck_invoice_line_items_ck_line_items_amount_non_negative_non_adjustment"
-            ),
+            name=op.f("ck_invoice_line_items_amount_non_negative_non_adjustment"),
         ),
         sa.CheckConstraint(
             "billing_period_end >= billing_period_start",
-            name=op.f("ck_invoice_line_items_ck_line_items_period_end_after_start"),
+            name=op.f("ck_invoice_line_items_period_end_after_start"),
         ),
         sa.ForeignKeyConstraint(
             ["invoice_id"],
@@ -722,11 +719,10 @@ def upgrade() -> None:
         sa.Column("invoice_id", sa.Uuid(), nullable=False),
         sa.Column("recorded_by_user_id", sa.Uuid(), nullable=False),
         sa.CheckConstraint(
-            "amount > 0", name=op.f("ck_payments_ck_payments_amount_strict_positive")
+            "amount > 0", name=op.f("ck_payments_amount_strict_positive")
         ),
         sa.CheckConstraint(
-            "paid_at <= CURRENT_DATE",
-            name=op.f("ck_payments_ck_payments_paid_at_not_future"),
+            "paid_at <= CURRENT_DATE", name=op.f("ck_payments_paid_at_not_future")
         ),
         sa.ForeignKeyConstraint(
             ["invoice_id"],
@@ -768,7 +764,7 @@ def downgrade() -> None:
     op.drop_table("notifications")
     op.drop_table("audit_logs")
     op.drop_table("users")
-    # Drop PG enum types (autogen không handle — xem S3.2 notes)
+    # Drop PG enum types (autogen không handle)
     for enum_name in (
         "user_role_enum",
         "billing_type_enum",

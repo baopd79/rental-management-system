@@ -79,19 +79,19 @@ class Lease(LeaseBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
     __table_args__ = (
         CheckConstraint(
             "end_date >= start_date",
-            name="ck_leases_end_after_start",
+            name="end_after_start",
         ),
         CheckConstraint(
             "rent_amount >= 0",
-            name="ck_leases_rent_non_negative",
+            name="rent_non_negative",
         ),
         CheckConstraint(
             "deposit_amount >= 0",
-            name="ck_leases_deposit_non_negative",
+            name="deposit_non_negative",
         ),
         CheckConstraint(
             "billing_day BETWEEN 1 AND 28",
-            name="ck_leases_billing_day_range",
+            name="billing_day_range",
         ),
     )
 

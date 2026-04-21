@@ -33,7 +33,7 @@ class PropertyBase(SQLModel):
         ge=1,
         le=28,
         description="Ngày billing default cho Property, [1, 28]. "
-                    "Lease snapshot khi ký (Lease có billing_day riêng).",
+        "Lease snapshot khi ký (Lease có billing_day riêng).",
     )
 
 
@@ -46,7 +46,7 @@ class Property(PropertyBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
     __table_args__ = (
         CheckConstraint(
             "billing_day BETWEEN 1 AND 28",
-            name="ck_properties_billing_day_range",
+            name="billing_day_range",
         ),
     )
 
@@ -60,8 +60,10 @@ class Property(PropertyBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
 # API schemas
 # ============================================================
 
+
 class PropertyCreate(PropertyBase):
     """Input khi Landlord tạo Property — landlord_id inject từ JWT."""
+
     pass
 
 

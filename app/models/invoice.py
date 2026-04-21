@@ -77,7 +77,7 @@ class Invoice(InvoiceBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     __table_args__ = (
         CheckConstraint(
             "total_amount >= 0",
-            name="ck_invoices_total_non_negative",
+            name="total_non_negative",
         ),
         # Void consistency: tất cả void fields NULL hoặc tất cả NOT NULL
         CheckConstraint(
@@ -86,7 +86,11 @@ class Invoice(InvoiceBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
             OR
             (voided_at IS NOT NULL AND voided_reason IS NOT NULL AND voided_by_user_id IS NOT NULL)
             """,
-            name="ck_invoices_void_fields_consistency",
+            name="void_fields_consistency",
+        ),
+        CheckConstraint(
+            "billing_month <= DATE_TRUNC('month', CURRENT_DATE)",
+            name="billing_month_not_future",
         ),
     )
 
@@ -237,12 +241,12 @@ class InvoiceLineItem(
     __table_args__ = (
         CheckConstraint(
             "billing_period_end >= billing_period_start",
-            name="ck_line_items_period_end_after_start",
+            name="period_end_after_start",
         ),
         # amount âm chỉ cho adjustment
         CheckConstraint(
             "line_type = 'adjustment' OR amount >= 0",
-            name="ck_line_items_amount_non_negative_non_adjustment",
+            name="amount_non_negative_non_adjustment",
         ),
         # service_id required iff line_type='service'
         CheckConstraint(
@@ -251,7 +255,7 @@ class InvoiceLineItem(
             OR
             (line_type IN ('rent', 'adjustment') AND service_id IS NULL)
             """,
-            name="ck_line_items_service_id_consistency",
+            name="service_id_consistency",
         ),
     )
 

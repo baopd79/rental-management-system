@@ -77,7 +77,7 @@ class Service(ServiceBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
     __table_args__ = (
         CheckConstraint(
             "price >= 0",
-            name="ck_services_price_non_negative",
+            name="price_non_negative",
         ),
         # Enforce: per_meter → có unit + meter_scope; ngược lại → cả 2 NULL
         CheckConstraint(
@@ -86,7 +86,7 @@ class Service(ServiceBase, UUIDPrimaryKeyMixin, TimestampMixin, table=True):
             OR
             (billing_type != 'per_meter' AND unit IS NULL AND meter_scope IS NULL)
             """,
-            name="ck_services_per_meter_fields_consistency",
+            name="per_meter_fields_consistency",
         ),
     )
 

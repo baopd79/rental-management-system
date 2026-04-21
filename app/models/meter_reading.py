@@ -49,20 +49,20 @@ class MeterReading(MeterReadingBase, UUIDPrimaryKeyMixin, TimestampMixin, table=
     __table_args__ = (
         CheckConstraint(
             "reading_value >= 0",
-            name="ck_meter_readings_value_non_negative",
+            name="value_non_negative",
         ),
     )
 
     service_id: UUID = Field(
         foreign_key="services.id",
         description="Service gắn reading (phải là billing_type=per_meter). "
-                    "Enforce ở service layer (DB không check enum tham chiếu).",
+        "Enforce ở service layer (DB không check enum tham chiếu).",
     )
     room_id: UUID | None = Field(
         default=None,
         foreign_key="rooms.id",
         description="NULL = shared meter (cả property). "
-                    "NOT NULL = per-room reading.",
+        "NOT NULL = per-room reading.",
     )
     created_by_user_id: UUID = Field(
         foreign_key="users.id",

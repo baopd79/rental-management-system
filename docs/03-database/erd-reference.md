@@ -124,6 +124,7 @@ CHECK (
 CHECK (reading_value >= 0)
 
 -- invoices
+
 CHECK (billing_month <= DATE_TRUNC('month', CURRENT_DATE))
 CHECK (total_amount >= 0)
 -- Void consistency
@@ -149,6 +150,10 @@ CHECK (moved_out_date IS NULL OR moved_out_date >= moved_in_date)
 -- payments
 CHECK (amount > 0)
 CHECK (paid_at <= CURRENT_DATE)
+-- SKIP (non-immutable, enforce ở service layer):
+-- CHECK (billing_month <= DATE_TRUNC('month', CURRENT_DATE))
+-- CHECK (paid_at <= CURRENT_DATE)
+-- Ở Phase 4 cần validate 2 rule này ở Pydantic/service layer.
 ```
 
 ---
