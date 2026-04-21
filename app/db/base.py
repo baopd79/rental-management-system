@@ -14,8 +14,32 @@ Alternative: PostgreSQL trigger — defer decision to Phase 4.
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, text
+from sqlalchemy import DateTime, text
 from sqlmodel import Field, SQLModel
+
+# ============================================================
+# Naming convention for database constraints
+# ============================================================
+# Ensures predictable, reproducible constraint names across
+# environments. Must be set BEFORE any table class is defined.
+#
+# Patterns:
+#   ix = index
+#   uq = unique constraint
+#   ck = check constraint
+#   fk = foreign key
+#   pk = primary key
+# ============================================================
+
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+SQLModel.metadata.naming_convention = NAMING_CONVENTION
 
 
 def _utc_now() -> datetime:
@@ -39,30 +63,23 @@ class UUIDPrimaryKeyMixin(SQLModel):
 
 class TimestampMixin(SQLModel):
     """Mixin cho created_at + updated_at.
-
-    Semantics:
-    - `created_at`: set 1 lần khi INSERT, không đổi
-    - `updated_at`: auto-update mỗi khi UPDATE (Phase 4 implement trigger/listener)
-
-    Cả 2 đều NOT NULL với server default NOW() → không phụ thuộc app timezone.
+    ...
     """
 
-    created_at: datetime | None = Field(
-        default=None,
-        sa_column=Column(
-            DateTime(timezone=True),
-            nullable=False,
-            server_default=text("NOW()"),
-        ),
+    created_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={
+            "nullable": False,
+            "server_default": text("NOW()"),
+        },
     )
 
-    updated_at: datetime | None = Field(
-        default=None,
-        sa_column=Column(
-            DateTime(timezone=True),
-            nullable=False,
-            server_default=text("NOW()"),
-        ),
+    updated_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={
+            "nullable": False,
+            "server_default": text("NOW()"),
+        },
     )
 
 
@@ -73,11 +90,10 @@ class CreatedAtOnlyMixin(SQLModel):
     những entity mà UPDATE không có ý nghĩa hoặc không được phép.
     """
 
-    created_at: datetime | None = Field(
-        default=None,
-        sa_column=Column(
-            DateTime(timezone=True),
-            nullable=False,
-            server_default=text("NOW()"),
-        ),
+    created_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={
+            "nullable": False,
+            "server_default": text("NOW()"),
+        },
     )
