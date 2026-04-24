@@ -1,0 +1,5200 @@
+openapi: 3.0.3
+
+info:
+  title: RMS API
+  description: |
+    **Rental Management System** — API spec for MVP.
+
+    - Landlord web/mobile app: manage properties, rooms, tenants, invoices
+    - Tenant web/mobile app: view lease, invoices, payments
+    - Authentication: JWT Bearer + refresh token rotation
+
+    Convention reference: `docs/04-api/api-design-decisions.md`
+  version: 1.0.0-mvp
+  contact:
+    name: Bảo
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.rms.example.com
+    description: Production (future)
+  - url: http://localhost:8000
+    description: Local development
+
+# Global security: all endpoints require Bearer auth unless overridden
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Auth
+    description: Authentication flows (public — no JWT required)
+  - name: Users
+    description: User profile — own data only
+  - name: Properties
+    description: Nhà trọ — owned by Landlord
+  - name: Rooms
+    description: Phòng — belongs to Property
+  - name: Tenants
+    description: Người thuê — has login account
+  - name: Occupants
+    description: Người ở cùng — no login account
+  - name: Leases
+    description: Hợp đồng — Room ↔ Tenant
+  - name: Services
+    description: Dịch vụ — Property-level (điện, nước, rác…)
+  - name: Meter Readings
+    description: Chỉ số công tơ — batch + individual
+  - name: Invoices
+    description: Hoá đơn — preview-commit pattern, immutable
+  - name: Payments
+    description: Thanh toán — record-only, no gateway
+  - name: Notifications
+    description: In-app badge notifications
+
+paths:
+
+  # ==========================================================================
+  # Auth — /api/v1/auth/*
+  # All public (no JWT). See api-design-decisions.md §B.
+  # ==========================================================================
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Landlord self-signup
+      description: |
+        Landlord tự đăng ký account. Tenant KHÔNG dùng endpoint này —
+        Tenant được Landlord invite qua `/auth/invite/accept`.
+      operationId: authRegister
+      security: []  # Public
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created, auto-login returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+          headers:
+            Set-Cookie:
+              description: Refresh token cookie (HttpOnly, Secure, SameSite=Strict, Path=/api/v1/auth/refresh)
+              schema:
+                type: string
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: DUPLICATE_TENANT_EMAIL
+                  message: Email already registered
+                  request_id: req_abc123
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email + password
+      operationId: authLogin
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+          headers:
+            Set-Cookie:
+              description: Refresh token cookie
+              schema:
+                type: string
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid email or password
+                  request_id: req_abc123
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate tokens (access + refresh)
+      description: |
+        Accepts refresh token from either:
+        1. Cookie `refresh_token` (web, preferred)
+        2. Body `{"refresh_token": "..."}` (mobile)
+
+        Returns new access token + rotates refresh token cookie.
+        Reuse detection: same refresh token used twice → revoke entire family.
+      operationId: authRefresh
+      security: []  # Refresh token is the credential
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Tokens rotated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+          headers:
+            Set-Cookie:
+              description: New refresh token cookie
+              schema:
+                type: string
+        '401':
+          description: Refresh token invalid, expired, or reused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid:
+                  value:
+                    error:
+                      code: INVALID_REFRESH_TOKEN
+                      message: Refresh token invalid
+                      request_id: req_abc123
+                expired:
+                  value:
+                    error:
+                      code: REFRESH_TOKEN_EXPIRED
+                      message: Refresh token expired
+                      request_id: req_abc123
+                reused:
+                  value:
+                    error:
+                      code: REFRESH_TOKEN_REUSED
+                      message: Refresh token reuse detected — session terminated
+                      request_id: req_abc123
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current device
+      description: |
+        Revoke current refresh token. Access token cannot be revoked
+        (stateless JWT) — expires naturally within 60 min.
+
+        Idempotent: subsequent calls return 204 even if refresh token
+        already invalid.
+      operationId: authLogout
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: Logged out (cookie cleared)
+          headers:
+            Set-Cookie:
+              description: Expired cookie to clear client storage
+              schema:
+                type: string
+                example: refresh_token=; Max-Age=0; Path=/api/v1/auth/refresh
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/invite/verify:
+    post:
+      tags: [Auth]
+      summary: Verify invite token (preview before accept)
+      description: |
+        Check invite token validity. Returns masked tenant info for UX
+        (show "Hi Nguyễn Văn A, set your password").
+
+        Token NOT consumed — safe to call repeatedly.
+      operationId: authInviteVerify
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenOnlyRequest'
+      responses:
+        '200':
+          description: Token valid, preview info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteVerifyResponse'
+        '400':
+          description: Token invalid, used, or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid:
+                  value:
+                    error:
+                      code: INVALID_INVITE_TOKEN
+                      message: Invite token not found
+                      request_id: req_abc123
+                used:
+                  value:
+                    error:
+                      code: INVITE_TOKEN_USED
+                      message: Invite token has already been used
+                      request_id: req_abc123
+                expired:
+                  value:
+                    error:
+                      code: INVITE_TOKEN_EXPIRED
+                      message: Invite token expired
+                      request_id: req_abc123
+
+  /api/v1/auth/invite/accept:
+    post:
+      tags: [Auth]
+      summary: Activate tenant account + set password + auto-login
+      description: |
+        Atomic: validate token → create User (link to Tenant) →
+        set password hash → mark token as used → issue access + refresh tokens.
+
+        `consent_pii` must be `true` (ADR-0006 explicit consent).
+      operationId: authInviteAccept
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteAcceptRequest'
+      responses:
+        '200':
+          description: Account activated + auto-login
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+          headers:
+            Set-Cookie:
+              description: Refresh token cookie
+              schema:
+                type: string
+        '400':
+          description: Invite token invalid/used/expired (same as /verify)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Request password reset email
+      description: |
+        **Enumeration-safe**: always returns 200 regardless of whether
+        email exists. If email registered → generate token + send email.
+        If not → no-op.
+
+        Rate limit (Phase 4): 3/hour/IP, 1/5min/email.
+      operationId: authPasswordResetRequest
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestBody'
+      responses:
+        '200':
+          description: Request accepted (generic message — no leak)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: If this email is registered, a password reset link has been sent.
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Set new password via reset token
+      description: |
+        Validate token → update password hash → revoke ALL refresh tokens
+        of user (invalidate all sessions).
+
+        **NO auto-login** — user must login with new password
+        (defense in depth vs compromised email).
+      operationId: authPasswordResetConfirm
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmBody'
+      responses:
+        '200':
+          description: Password updated — user must login again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Password updated. Please login with new password.
+        '400':
+          description: Token invalid/used/expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ==========================================================================
+  # Users — /api/v1/users/*
+  # Singleton "own" pattern (C1).
+  # ==========================================================================
+
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      summary: Get own profile
+      operationId: usersMeGet
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    patch:
+      tags: [Users]
+      summary: Update own profile
+      description: |
+        Partial update. Cannot change `role`, `password`, `is_active` here.
+        Password change: `/users/me/change-password`.
+      operationId: usersMeUpdate
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Email conflict (another user has this email)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/users/me/change-password:
+    post:
+      tags: [Users]
+      summary: Change own password (requires current password)
+      description: |
+        Differs from `/auth/password-reset/*` — user is logged-in,
+        proves identity via `current_password`.
+
+        Side effect: revoke all OTHER refresh tokens of user
+        (keep current session alive).
+      operationId: usersMeChangePassword
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Password changed successfully
+        '401':
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Current password is incorrect
+                  request_id: req_abc123
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ==========================================================================
+  # Properties — /api/v1/properties/*
+  # Landlord only. See endpoints.md §3.
+  # ==========================================================================
+
+  /api/v1/properties:
+    get:
+      tags: [Properties]
+      summary: List Landlord's properties
+      description: |
+        Returns own properties (scoped by `landlord_id` from JWT).
+        Tenants do not see properties (403 via RBAC middleware).
+      operationId: propertiesList
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: name__contains
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Case-insensitive substring match on name
+      responses:
+        '200':
+          description: List of properties
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PropertyListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Properties]
+      summary: Create a property
+      operationId: propertiesCreate
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyCreate'
+      responses:
+        '201':
+          description: Property created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Property'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/properties/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Properties]
+      summary: Get property detail
+      description: |
+        Returns property with computed stats (room count, active lease count,
+        current month revenue).
+      operationId: propertiesGet
+      responses:
+        '200':
+          description: Property detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PropertyDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Properties]
+      summary: Update property
+      description: Partial update. All fields optional.
+      operationId: propertiesUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyUpdate'
+      responses:
+        '200':
+          description: Updated property
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Property'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags: [Properties]
+      summary: Hard delete property
+      description: |
+        Hard delete. Guard: property must have zero rooms (archived rooms
+        also count — archive Rooms does NOT free the property).
+      operationId: propertiesDelete
+      responses:
+        '204':
+          description: Property deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Property has rooms
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: PROPERTY_HAS_ROOMS
+                  message: Cannot delete property with existing rooms
+                  request_id: req_abc123
+                  details:
+                    property_id: 550e8400-e29b-41d4-a716-446655440000
+                    room_count: 12
+
+  # ==========================================================================
+  # Rooms — /api/v1/rooms/* and nested /api/v1/properties/{pid}/rooms
+  # Hybrid nesting (C2 rules). Tenants see only their current room.
+  # ==========================================================================
+
+  /api/v1/properties/{pid}/rooms:
+    parameters:
+      - $ref: '#/components/parameters/PathPropertyId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Rooms]
+      summary: List rooms of a property (nested)
+      description: |
+        Nested list. Default returns non-archived rooms.
+        Use `is_archived=true` to include archived.
+      operationId: roomsListByProperty
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: is_archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated room statuses (`vacant,occupied,expiring_soon,lease_expired`)
+        - name: display_name__contains
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of rooms
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Rooms]
+      summary: Create room in property
+      description: |
+        `display_name` must be unique within property (excluding archived).
+        `default_rent` is optional snapshot for future leases.
+      operationId: roomsCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomCreate'
+      responses:
+        '201':
+          description: Room created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate `display_name` in property
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: DUPLICATE_ROOM_NAME
+                  message: Room name already exists in this property
+                  request_id: req_abc123
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/rooms:
+    get:
+      tags: [Rooms]
+      summary: List rooms (flat, cross-property)
+      description: |
+        Flat list for dashboard queries. `?property_id=X` alias for nested
+        endpoint. `?status=vacant` for cross-property "available rooms".
+      operationId: roomsListFlat
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: property_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: is_archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: display_name__contains
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of rooms
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/rooms/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Rooms]
+      summary: Get room detail
+      description: |
+        Landlord: any own room. Tenant: only room of current active lease
+        (others → 404 via ownership rule).
+      operationId: roomsGet
+      responses:
+        '200':
+          description: Room detail with computed `status`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Rooms]
+      summary: Update room
+      operationId: roomsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomUpdate'
+      responses:
+        '200':
+          description: Updated room
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate `display_name`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/rooms/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Rooms]
+      summary: Archive room (soft delete)
+      description: |
+        Soft delete — sets `is_archived=true`, `archived_at=NOW()`.
+        Guards:
+        - Active lease → 409 `ROOM_HAS_ACTIVE_LEASE`
+        - Unpaid invoices on past leases → 409 `ROOM_HAS_UNPAID_INVOICES`
+        - Already archived → 409 `ROOM_ALREADY_ARCHIVED`
+      operationId: roomsArchive
+      responses:
+        '200':
+          description: Room archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Room'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot archive — active lease or unpaid invoices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                active_lease:
+                  value:
+                    error:
+                      code: ROOM_HAS_ACTIVE_LEASE
+                      message: Cannot archive room with active lease
+                      request_id: req_abc123
+                      details:
+                        room_id: 550e8400-e29b-41d4-a716-446655440000
+                        active_lease_id: 660e8400-e29b-41d4-a716-446655440001
+                unpaid_invoice:
+                  value:
+                    error:
+                      code: ROOM_HAS_UNPAID_INVOICES
+                      message: Cannot archive room with unpaid invoices
+                      request_id: req_abc123
+                      details:
+                        room_id: 550e8400-e29b-41d4-a716-446655440000
+                        unpaid_count: 2
+
+  # ==========================================================================
+  # Tenants — /api/v1/tenants/*
+  # Landlord manages. Tenant views own profile via /users/me only.
+  # ==========================================================================
+
+  /api/v1/tenants:
+    get:
+      tags: [Tenants]
+      summary: List Landlord's tenants
+      description: |
+        Returns tenants scoped to current Landlord.
+        Default filter `is_archived=false` — use `is_archived=true` to see moved-out.
+      operationId: tenantsList
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: is_archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: name__contains
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: phone__startswith
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: email__contains
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of tenants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Tenants]
+      summary: Create tenant + generate invite link
+      description: |
+        Creates Tenant record (no User account yet) and generates invite token.
+        Response includes `invite_link` — Landlord shares via Zalo/SMS.
+
+        Guards:
+        - Duplicate phone among active tenants → 409 `DUPLICATE_TENANT_PHONE`
+        - Duplicate email among active tenants (if provided) → 409 `DUPLICATE_TENANT_EMAIL`
+
+        Reactivation path (phone matches archived tenant): response returns 409
+        with `reactivation_candidate_id` — client shows dialog
+        [A] reactivate (call `/tenants/{id}/reactivate`) / [B] create new (retry with flag).
+      operationId: tenantsCreate
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantCreate'
+      responses:
+        '201':
+          description: Tenant created + invite link generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantWithInvite'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Duplicate phone/email or reactivation candidate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                duplicate_phone:
+                  value:
+                    error:
+                      code: DUPLICATE_TENANT_PHONE
+                      message: Phone already used by another active tenant
+                      request_id: req_abc123
+                reactivation_candidate:
+                  summary: Phone matches archived tenant
+                  value:
+                    error:
+                      code: DUPLICATE_TENANT_PHONE
+                      message: Phone matches an archived tenant — reactivate or create new?
+                      request_id: req_abc123
+                      details:
+                        reactivation_candidate_id: 550e8400-e29b-41d4-a716-446655440000
+                        archived_at: '2025-11-15T00:00:00Z'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/tenants/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Tenants]
+      summary: Get tenant detail
+      operationId: tenantsGet
+      responses:
+        '200':
+          description: Tenant detail with computed `status`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Tenants]
+      summary: Update tenant
+      description: Partial update. Phone/email unique per landlord active set.
+      operationId: tenantsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantUpdate'
+      responses:
+        '200':
+          description: Updated tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate phone/email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/tenants/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Tenants]
+      summary: Archive tenant (soft delete)
+      description: |
+        Soft delete. Sets `is_archived=true`, `archived_at=NOW()`, `move_out_date` from body.
+
+        Side effect: invalidate User account (`users.is_active=false`) if tenant has one.
+
+        Guards:
+        - Active lease → 409 `TENANT_HAS_ACTIVE_LEASE`
+        - Unpaid invoices → 409 `TENANT_HAS_UNPAID_INVOICES`
+        - Already archived → 409 `TENANT_ALREADY_ARCHIVED`
+      operationId: tenantsArchive
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantArchiveRequest'
+      responses:
+        '200':
+          description: Tenant archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Archive blocked — see error code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tenants/{id}/reactivate:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Tenants]
+      summary: Reactivate archived tenant
+      description: |
+        Unarchive: sets `is_archived=false`, clears `archived_at` + `move_out_date`.
+        Preserves existing `user_id` (old account reusable).
+
+        Does NOT auto-send new invite. If tenant needs new password,
+        use `/users/me/change-password` after login (or `/auth/password-reset/request`).
+
+        Guards:
+        - Tenant not archived → 409 `TENANT_ALREADY_REACTIVATED` (reuse `TENANT_ALREADY_ARCHIVED` semantics — inverse)
+        - Tenant anonymized (PII purged after 5 years) → 409 `TENANT_ANONYMIZED`
+      operationId: tenantsReactivate
+      responses:
+        '200':
+          description: Tenant reactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot reactivate — anonymized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: TENANT_ANONYMIZED
+                  message: Cannot reactivate — PII was anonymized per retention policy
+                  request_id: req_abc123
+
+  /api/v1/tenants/{id}/resend-invite:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Tenants]
+      summary: Regenerate invite token for tenant
+      description: |
+        Regenerates invite token (old token invalidated).
+        Use when original invite expired/lost.
+
+        Guard: tenant already has active User account → 409.
+        If user needs new password, use password reset flow instead.
+      operationId: tenantsResendInvite
+      responses:
+        '200':
+          description: New invite generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteLinkResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Tenant already has active account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/tenants/{id}/invoices:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Tenants]
+      summary: List all invoices of a tenant (cross-lease alias)
+      description: |
+        Convenience alias for `/invoices?tenant_id={id}`.
+        Returns invoices across ALL leases of this tenant (historical + current).
+        Full Invoice schema — see Invoices section.
+      operationId: tenantsListInvoices
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated invoice statuses (`unpaid,partial,paid,void`)
+      responses:
+        '200':
+          description: List of invoices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # Occupants — /api/v1/occupants/* and nested /api/v1/tenants/{tid}/occupants
+  # Landlord only. Occupants have no login account.
+  # ==========================================================================
+
+  /api/v1/tenants/{tid}/occupants:
+    parameters:
+      - $ref: '#/components/parameters/PathTenantId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Occupants]
+      summary: List occupants of a tenant
+      description: |
+        Default: active only (`moved_out_date IS NULL`).
+        Set `moved_out_date__isnull=false` to see history.
+      operationId: occupantsListByTenant
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: moved_out_date__isnull
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+          description: Default true = active occupants only
+      responses:
+        '200':
+          description: List of occupants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OccupantListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Occupants]
+      summary: Add occupant to tenant
+      description: |
+        Creates Occupant record (no account). `moved_in_date` required — used for
+        per-person billing snapshot at invoice time.
+      operationId: occupantsCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OccupantCreate'
+      responses:
+        '201':
+          description: Occupant added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Occupant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/occupants/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    patch:
+      tags: [Occupants]
+      summary: Update occupant
+      description: |
+        Partial update. Common uses:
+        - Update `name`, `id_card_number`, `note`
+        - Set `moved_out_date` (soft "remove" via date — differs from hard DELETE)
+
+        Constraint: `moved_out_date >= moved_in_date` if provided.
+      operationId: occupantsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OccupantUpdate'
+      responses:
+        '200':
+          description: Updated occupant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Occupant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags: [Occupants]
+      summary: Hard delete occupant (only if not referenced)
+      description: |
+        Hard delete — ONLY allowed when no Tenant references this Occupant via
+        `promoted_from_occupant_id`. For soft removal, set `moved_out_date` via PATCH.
+
+        Typical use: correct data entry mistake (wrong person added).
+
+        Guard: if referenced → 409 (Phase 4 may add dedicated code `OCCUPANT_REFERENCED`).
+      operationId: occupantsDelete
+      responses:
+        '204':
+          description: Occupant deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Occupant referenced by a Tenant (promote history)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/occupants/{id}/promote:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Occupants]
+      summary: Promote occupant to Tenant representative
+      description: |
+        **Atomic multi-resource action** (F4).
+
+        Does 3 changes in a single DB transaction:
+        1. Updates old Occupant: `moved_out_date = effective_date`
+        2. Creates new Tenant with `promoted_from_occupant_id = {occupant.id}` and
+           `tenant_info` from request body; generates invite token (link returned)
+        3. Updates Lease: `tenant_id = new_tenant.id` (transfers representation)
+
+        Validation:
+        - Occupant must still be active (`moved_out_date IS NULL`)
+        - Occupant must belong to an active lease
+        - `effective_date >= occupant.moved_in_date`
+        - `effective_date <= lease.end_date`
+        - `tenant_info.phone` unique among active tenants
+
+        Failure → transaction rollback, nothing changed.
+      operationId: occupantsPromote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteOccupantRequest'
+      responses:
+        '200':
+          description: Occupant promoted (atomic)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoteOccupantResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Invalid state — see error code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                already_moved_out:
+                  value:
+                    error:
+                      code: OCCUPANT_ALREADY_MOVED_OUT
+                      message: Occupant already moved out — cannot promote
+                      request_id: req_abc123
+                duplicate_phone:
+                  value:
+                    error:
+                      code: DUPLICATE_TENANT_PHONE
+                      message: Phone already used by another active tenant
+                      request_id: req_abc123
+        '422':
+          description: Validation failed (effective_date, tenant_info)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_EFFECTIVE_DATE
+                  message: effective_date must be between occupant.moved_in_date and lease.end_date
+                  request_id: req_abc123
+
+  # ==========================================================================
+  # Leases — /api/v1/leases/* and nested /api/v1/rooms/{rid}/leases
+  # Strict single-active per room. Immutable once active (only note + end_date editable).
+  # ==========================================================================
+
+  /api/v1/rooms/{rid}/leases:
+    parameters:
+      - $ref: '#/components/parameters/PathRoomId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Leases]
+      summary: List lease history of a room
+      description: |
+        Returns all leases for a room (history + current).
+        Default sort `-start_date` (newest first).
+      operationId: leasesListByRoom
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: terminated_at__isnull
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: true = active only (non-terminated); false = terminated only
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated lease statuses
+      responses:
+        '200':
+          description: List of leases
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaseListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Leases]
+      summary: Create lease for a room
+      description: |
+        Creates a new lease. Rent & deposit are snapshotted (not live from Room).
+
+        Guards:
+        - Active lease exists → 409 `ROOM_HAS_ACTIVE_LEASE`
+        - `end_date < start_date` → 422 `INVALID_LEASE_DATES`
+        - `billing_day` ∉ [1, 28] → 422
+
+        Initial status depends on `start_date`:
+        - `start_date > TODAY` → draft
+        - `start_date <= TODAY` → active
+      operationId: leasesCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaseCreate'
+      responses:
+        '201':
+          description: Lease created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Room has active lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: ROOM_HAS_ACTIVE_LEASE
+                  message: Room already has an active lease
+                  request_id: req_abc123
+                  details:
+                    room_id: 550e8400-e29b-41d4-a716-446655440000
+                    active_lease_id: 660e8400-e29b-41d4-a716-446655440001
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/leases:
+    get:
+      tags: [Leases]
+      summary: List leases (flat, cross-room)
+      description: |
+        Landlord: all own leases. Tenant: only own lease(s).
+        Filter combinations for dashboard queries.
+      operationId: leasesListFlat
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: room_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: tenant_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: terminated_at__isnull
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: end_date__lte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: end_date__gte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of leases
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaseListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/leases/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Leases]
+      summary: Get lease detail
+      description: |
+        Landlord: any own lease. Tenant: only own (others → 404).
+      operationId: leasesGet
+      responses:
+        '200':
+          description: Lease detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Leases]
+      summary: Update lease (limited fields only)
+      description: |
+        **Active/expiring lease restriction**: only `end_date` and `note` editable.
+        Other fields (rent_amount, deposit_amount, tenant_id, etc.) require
+        terminate + create new lease (renewal flow).
+
+        Draft lease (not yet started) has more editable fields in Phase 4
+        (may relax this restriction later).
+      operationId: leasesUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaseUpdate'
+      responses:
+        '200':
+          description: Updated lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/leases/{id}/terminate:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Leases]
+      summary: Terminate lease (action)
+      description: |
+        Sets `terminated_at = NOW()`, `terminated_date` from body.
+
+        Side effects:
+        - Room.status recomputes (vacant if no other lease)
+        - Tenant.status may change to moved_out (computed)
+        - Response signals whether final invoice should be generated
+          (Landlord flow: after terminate, prompt to create final invoice
+           pro-rated per `terminated_date`)
+
+        Guards:
+        - Already terminated → 409 `LEASE_ALREADY_TERMINATED`
+      operationId: leasesTerminate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateLeaseRequest'
+      responses:
+        '200':
+          description: Lease terminated + final invoice hint
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateLeaseResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already terminated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: LEASE_ALREADY_TERMINATED
+                  message: Lease already terminated
+                  request_id: req_abc123
+
+  /api/v1/leases/{id}/settle-deposit:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Leases]
+      summary: Settle deposit (action)
+      description: |
+        Separate step from `/terminate` (Phase 2 US-055 + US-056 split).
+
+        Sets `deposit_status` and optional `amount_returned` / `deduction_note`.
+
+        Side effect: if Tenant has no other active lease → auto-archive Tenant
+        (including invalidate User account).
+
+        Deposit statuses:
+        - `returned`: full refund to tenant
+        - `forfeited`: deposit kept (breach of contract)
+        - `deducted`: partial deduction (amount_returned < deposit_amount)
+
+        Rollover renewal pattern: use `returned` + `amount_returned = 0` + note
+        (Phase 2 decision — no separate "rollover" status).
+
+        Guards:
+        - Lease not yet terminated → 409 (flag: may add `LEASE_NOT_TERMINATED` code)
+        - Deposit already settled → 409 `DEPOSIT_ALREADY_SETTLED`
+      operationId: leasesSettleDeposit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettleDepositRequest'
+      responses:
+        '200':
+          description: Deposit settled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettleDepositResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already settled or lease not terminated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/leases/{id}/renew:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Leases]
+      summary: Renew lease — create linked new lease
+      description: |
+        Creates a NEW lease for the SAME room + tenant.
+        Old lease is NOT extended — it expires naturally per its `end_date`.
+
+        The new lease is linked via `previous_lease_id` for history chain.
+
+        Input: new lease terms (dates, rent, deposit). Typically:
+        - `start_date` = old `end_date + 1`
+        - `end_date` = e.g. `start_date + 12 months`
+        - `rent_amount` = may change per new agreement
+        - `deposit_amount` = typically same (rollover via `/settle-deposit`
+           returned + amount=0 on old lease)
+
+        Guard: old lease must be active/expiring_soon/expired (not draft, not terminated).
+      operationId: leasesRenew
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenewLeaseRequest'
+      responses:
+        '201':
+          description: New lease created (linked to old)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenewLeaseResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Old lease in invalid state for renewal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ==========================================================================
+  # Services — /api/v1/services/* and nested /api/v1/properties/{pid}/services
+  # Landlord only. Services fixed at Property level — no per-Lease override.
+  # ==========================================================================
+
+  /api/v1/properties/{pid}/services:
+    parameters:
+      - $ref: '#/components/parameters/PathPropertyId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Services]
+      summary: List services of a property
+      operationId: servicesListByProperty
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: is_active
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: billing_type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/BillingType'
+      responses:
+        '200':
+          description: List of services
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Services]
+      summary: Create service in property
+      description: |
+        Validation rules per `billing_type`:
+        - `per_meter`: `unit` required (e.g. "kWh"), `meter_scope` required (shared/per_room)
+        - `per_person` / `fixed`: `unit` must be NULL, `meter_scope` must be NULL
+
+        Scope rules:
+        - `all_rooms`: applies to every room in property (default)
+        - `selected_rooms`: `applied_room_ids` required (non-empty array)
+
+        `applied_room_ids` only valid when `scope = selected_rooms`.
+      operationId: servicesCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceCreate'
+      responses:
+        '201':
+          description: Service created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Invalid service config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_SERVICE_CONFIG
+                  message: per_meter billing requires unit and meter_scope
+                  request_id: req_abc123
+
+  /api/v1/services:
+    get:
+      tags: [Services]
+      summary: List services (flat, cross-property)
+      operationId: servicesListFlat
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: property_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: is_active
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: billing_type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/BillingType'
+      responses:
+        '200':
+          description: List of services
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/services/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Services]
+      summary: Get service detail (includes applied_room_ids)
+      operationId: servicesGet
+      responses:
+        '200':
+          description: Service detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Services]
+      summary: Update service (immutable billing_type + unit)
+      description: |
+        Partial update.
+
+        **Immutable fields** (return 422 if attempted):
+        - `billing_type` — lock at creation
+        - `unit` — lock at creation
+        - `meter_scope` — lock at creation
+        - `price` — no mid-period change (Phase 2 decision)
+
+        If price needs change, deactivate current service + create new one.
+
+        `scope` and `applied_room_ids` CAN be updated:
+        - Changing scope from `all_rooms` → `selected_rooms` requires array
+        - PATCH replaces `applied_room_ids` entirely (not partial merge)
+      operationId: servicesUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceUpdate'
+      responses:
+        '200':
+          description: Updated service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/services/{id}/activate:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Services]
+      summary: Activate service (toggle is_active=true)
+      description: |
+        Sets `is_active = true`. Re-enables service for future billing cycles.
+
+        Guard: already active → 409 `SERVICE_ALREADY_ACTIVE`.
+      operationId: servicesActivate
+      responses:
+        '200':
+          description: Service activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/services/{id}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Services]
+      summary: Deactivate service (toggle is_active=false)
+      description: |
+        Sets `is_active = false`. Does NOT retroactively remove from existing invoices.
+        Only excludes from future invoice generation.
+
+        Guard: already inactive → 409 `SERVICE_ALREADY_INACTIVE`.
+      operationId: servicesDeactivate
+      responses:
+        '200':
+          description: Service deactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # Meter Readings — batch (nested) + individual CRUD (flat)
+  # F3 — All-or-nothing batch, max 100 readings per request.
+  # ==========================================================================
+
+  /api/v1/properties/{pid}/meter-readings:
+    parameters:
+      - $ref: '#/components/parameters/PathPropertyId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Meter Readings]
+      summary: Batch submit meter readings for property (primary UX)
+      description: |
+        **Primary UX** — Landlord reads meters for all rooms in one pass.
+
+        All-or-nothing transaction: if any reading fails validation → reject entire batch.
+        Max 100 readings per batch.
+
+        Reading → billing month mapping (Phase 2 Option B):
+        `reading_date = 2026-05-01` → consumption belongs to `billing_month = 2026-04`.
+
+        Error types (reject batch):
+        - Invalid `service_id` / `room_id` / ownership
+        - `value < 0`
+        - Service not active / not per_meter type
+        - `room_id` mismatch with service scope
+
+        Warning types (accept batch, flag):
+        - `value_lower_than_previous`: current < previous reading (tampering? reset?)
+        - `large_gap_since_previous`: > 45 days gap
+        - `missing_initial_reading`: first reading for service with no baseline
+      operationId: meterReadingsBatchCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeterReadingBatchRequest'
+      responses:
+        '201':
+          description: Batch created successfully (with possible warnings)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeterReadingBatchResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Batch rejected — one or more readings invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Batch validation failed — no readings created
+                  request_id: req_abc123
+                  details:
+                    - field: readings.0.service_id
+                      error: Service is not per_meter type
+                      code: value_error.custom
+                    - field: readings.2.value
+                      error: Must be >= 0
+                      code: value_error.number.not_ge
+
+  /api/v1/meter-readings:
+    get:
+      tags: [Meter Readings]
+      summary: List meter readings (flat, cross-property)
+      operationId: meterReadingsList
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: property_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: service_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: room_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: room_id__isnull
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: true = shared meter readings only (room_id IS NULL)
+        - name: reading_date__gte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: reading_date__lte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of meter readings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeterReadingListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/meter-readings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Meter Readings]
+      summary: Get meter reading detail
+      description: |
+        Detail includes:
+        - `previous_reading`: prior reading for same (service_id, room_id)
+        - `referenced_invoice_id`: invoice using this reading (if any)
+      operationId: meterReadingsGet
+      responses:
+        '200':
+          description: Meter reading detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeterReadingDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Meter Readings]
+      summary: Update meter reading (Phase 2 US-071)
+      description: |
+        Mutability rules (Phase 2):
+        - Not referenced by invoice → edit freely
+        - Referenced by unpaid invoice (no payment) → edit allowed, returns warning
+        - Referenced by paid/partial invoice → **blocked** with 409
+
+        PATCH changes do NOT auto-propagate to invoices (Phase 2 Option 3).
+        Landlord must explicitly void + recreate invoice if needed.
+      operationId: meterReadingsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeterReadingUpdate'
+      responses:
+        '200':
+          description: Reading updated (possible warning if referenced by unpaid invoice)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeterReadingUpdateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Referenced by paid/partial invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: READING_REFERENCED_BY_PAID_INVOICE
+                  message: Cannot modify — referenced by paid or partially-paid invoice
+                  request_id: req_abc123
+                  details:
+                    reading_id: 550e8400-e29b-41d4-a716-446655440000
+                    invoice_id: 660e8400-e29b-41d4-a716-446655440001
+                    invoice_status: paid
+
+    delete:
+      tags: [Meter Readings]
+      summary: Delete meter reading
+      description: |
+        Hard delete. Guard: referenced by any invoice → 409.
+        For safety, landlord should void referencing invoice first.
+      operationId: meterReadingsDelete
+      responses:
+        '204':
+          description: Reading deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Referenced by an invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # Invoices — F1 preview-commit pattern, F2 void-recreate immutability
+  # Batch per property + individual per lease.
+  # ==========================================================================
+
+  /api/v1/properties/{pid}/invoices/preview:
+    parameters:
+      - $ref: '#/components/parameters/PathPropertyId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Invoices]
+      summary: Preview invoice batch for property (no persist)
+      description: |
+        **Stateless compute** — returns what invoices WOULD be created for all active
+        leases in this property for the given billing_month.
+
+        No DB writes. Client can send different `exclude_lease_ids` to recompute.
+
+        Each preview entry includes:
+        - `lease_id`, `room_display_name`, `tenant_name` (for UI)
+        - `total_amount` + embedded `line_items` array
+        - `warnings`: per-lease flags (missing meter reading, zero readings, etc.)
+
+        Summary at top: totals, excluded count, warning count.
+      operationId: invoicesBatchPreview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvoiceBatchRequest'
+      responses:
+        '200':
+          description: Preview generated (no persist)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceBatchPreviewResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/properties/{pid}/invoices:
+    parameters:
+      - $ref: '#/components/parameters/PathPropertyId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Invoices]
+      summary: Commit invoice batch for property (persist)
+      description: |
+        Creates invoices for all active leases (minus `exclude_lease_ids`).
+
+        `on_duplicate` behavior:
+        - `skip` (default): skip leases that already have non-voided invoice for month
+        - `error`: fail entire batch if any duplicate exists
+
+        Client typically calls `/preview` first, then commits with same body
+        to persist (stateless — server recomputes).
+
+        Validation:
+        - `billing_month` not in future
+        - Property must have at least 1 active lease (or 422 if none)
+      operationId: invoicesBatchCommit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvoiceBatchCommitRequest'
+      responses:
+        '201':
+          description: Invoices created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceBatchCommitResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate conflict when `on_duplicate=error`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: DUPLICATE_INVOICE
+                  message: One or more leases already have invoices for this month
+                  request_id: req_abc123
+                  details:
+                    billing_month: '2026-05'
+                    duplicate_lease_ids:
+                      - 550e8400-e29b-41d4-a716-446655440000
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/leases/{lid}/invoices/preview:
+    parameters:
+      - $ref: '#/components/parameters/PathLeaseId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Invoices]
+      summary: Preview single-lease invoice (no persist)
+      description: |
+        Single-lease variant of `/properties/{pid}/invoices/preview`.
+        Used for: final invoice on termination (pro-rated), edge cases.
+      operationId: invoicesSinglePreview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvoiceSingleRequest'
+      responses:
+        '200':
+          description: Preview generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoicePreviewItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/leases/{lid}/invoices:
+    parameters:
+      - $ref: '#/components/parameters/PathLeaseId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Invoices]
+      summary: List invoices of a lease (nested)
+      description: |
+        Nested list for lease history.
+        Alias for `/invoices?lease_id={lid}`.
+      operationId: invoicesListByLease
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: voided_at__isnull
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of invoices (list shape — no line_items embedded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Invoices]
+      summary: Commit single-lease invoice (persist)
+      description: |
+        Creates a single invoice for this lease.
+
+        Guards:
+        - Duplicate `(lease_id, billing_month)` non-voided → 409 `DUPLICATE_INVOICE`
+        - `billing_month` in future → 422 `INVALID_BILLING_MONTH`
+        - Missing meter readings for per_meter services → 409 `MISSING_METER_READING`
+      operationId: invoicesSingleCommit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvoiceSingleRequest'
+      responses:
+        '201':
+          description: Invoice created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate invoice or missing readings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/invoices:
+    get:
+      tags: [Invoices]
+      summary: List invoices (flat, cross-lease)
+      description: |
+        Landlord: all own invoices. Tenant: only own invoices (via lease→tenant).
+      operationId: invoicesListFlat
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: status__in
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated (`unpaid,partial,paid,void`)
+        - name: lease_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: tenant_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: property_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: billing_month__gte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: billing_month__lte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: voided_at__isnull
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of invoices (no line_items embedded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/invoices/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Invoices]
+      summary: Get invoice detail (with line_items embedded)
+      description: |
+        Detail endpoint returns full invoice with line_items array embedded.
+        Use this for invoice rendering screen.
+
+        Landlord: any own. Tenant: only own (others → 404).
+      operationId: invoicesGet
+      responses:
+        '200':
+          description: Invoice detail with line_items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/invoices/{id}/void:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Invoices]
+      summary: Void invoice (F2 pattern)
+      description: |
+        Invoice Immutability: cannot edit invoice. Void + recreate is the ONLY
+        correction pattern.
+
+        Sets `voided_at`, `voided_reason`, `voided_by_user_id`, `void_note`.
+        Invoice status becomes `void`.
+
+        Existing payments are NOT deleted (audit trail preserved).
+        If recreating invoice, landlord can reassign payments manually (Phase 4 UX).
+
+        Guards:
+        - Already voided → 409 `INVOICE_ALREADY_VOIDED`
+      operationId: invoicesVoid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoidInvoiceRequest'
+      responses:
+        '200':
+          description: Invoice voided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already voided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVOICE_ALREADY_VOIDED
+                  message: Invoice is already voided
+                  request_id: req_abc123
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/invoices/{iid}/payments:
+    parameters:
+      - $ref: '#/components/parameters/PathInvoiceId'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Invoices]
+      summary: List payments of an invoice (alias)
+      description: |
+        Alias for `/payments?invoice_id={iid}`.
+        Full Payment schema — see Payments section.
+      operationId: invoicesListPayments
+      parameters:
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+      responses:
+        '200':
+          description: List of payments for this invoice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Payments]
+      summary: Record payment for invoice
+      description: |
+        Records a payment received for the invoice (record-only, no gateway).
+
+        Validations:
+        - `amount > 0` → 422 `VALIDATION_ERROR`
+        - `amount > invoice.total_amount - invoice.total_paid` → 422 `PAYMENT_OVERPAY`
+        - `paid_at > TODAY` → 422 `INVALID_PAYMENT_DATE`
+        - Invoice voided → 409 `INVOICE_NOT_PAYABLE`
+
+        Side effect: invoice.status recomputes (unpaid → partial → paid).
+      operationId: paymentsCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+      responses:
+        '201':
+          description: Payment recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentCreateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Invoice voided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVOICE_NOT_PAYABLE
+                  message: Cannot record payment on voided invoice
+                  request_id: req_abc123
+        '422':
+          description: Amount/date validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                overpay:
+                  value:
+                    error:
+                      code: PAYMENT_OVERPAY
+                      message: Payment amount exceeds remaining balance
+                      request_id: req_abc123
+                      details:
+                        invoice_total: 2920000
+                        total_paid: 2000000
+                        remaining: 920000
+                        attempted: 1000000
+                future_date:
+                  value:
+                    error:
+                      code: INVALID_PAYMENT_DATE
+                      message: Payment date cannot be in the future
+                      request_id: req_abc123
+
+  # ==========================================================================
+  # Payments — /api/v1/payments/* and nested /api/v1/invoices/{iid}/payments
+  # Landlord creates/deletes. Tenant reads own.
+  # ==========================================================================
+
+  /api/v1/payments:
+    get:
+      tags: [Payments]
+      summary: List payments (flat, cross-invoice)
+      description: |
+        Landlord: all own payments (via invoice→lease→landlord_id).
+        Tenant: own payments only (via invoice→lease→tenant).
+      operationId: paymentsListFlat
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: invoice_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: method
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/PaymentMethod'
+        - name: paid_at__gte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: paid_at__lte
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of payments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/payments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    get:
+      tags: [Payments]
+      summary: Get payment detail
+      operationId: paymentsGet
+      responses:
+        '200':
+          description: Payment detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Payments]
+      summary: Delete payment (record correction)
+      description: |
+        Hard delete — use when payment was recorded by mistake.
+
+        **Side effect**: invoice status recomputes.
+        Response includes `updated_invoice` for optimistic UI update.
+
+        Only Landlord can delete. Not permitted once payment is referenced in
+        reconciliation report (Phase 4 future — MVP allows delete anytime).
+      operationId: paymentsDelete
+      responses:
+        '200':
+          description: Payment deleted + invoice status recomputed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDeleteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # Notifications — /api/v1/notifications/*
+  # In-app badge; both Landlord and Tenant receive.
+  # ==========================================================================
+
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List own notifications
+      description: |
+        Returns notifications addressed to current user.
+        Response envelope includes extra `unread_count` field (across ALL unread,
+        not just current page).
+
+        Default sort `-created_at`.
+      operationId: notificationsList
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/PaginationLimit'
+        - $ref: '#/components/parameters/PaginationOffset'
+        - $ref: '#/components/parameters/SortQuery'
+        - name: is_read
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: type__in
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated notification types
+      responses:
+        '200':
+          description: Notifications list with unread count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/notifications/{id}/read:
+    parameters:
+      - $ref: '#/components/parameters/PathIdUUID'
+      - $ref: '#/components/parameters/RequestIdHeader'
+
+    post:
+      tags: [Notifications]
+      summary: Mark single notification as read
+      description: |
+        Sets `is_read=true`, `read_at=NOW()`.
+        Idempotent — calling again on already-read notification returns 200.
+      operationId: notificationsMarkRead
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all own notifications as read
+      description: |
+        Batch mark: sets `is_read=true` + `read_at=NOW()` on every
+        unread notification for current user.
+      operationId: notificationsMarkAllRead
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      responses:
+        '200':
+          description: Batch marked count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationMarkAllResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+
+  # ==========================================================================
+  # Security Schemes
+  # ==========================================================================
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token in `Authorization: Bearer <token>` header.
+
+        - TTL: 60 minutes
+        - Algorithm: HS256
+        - Claims: `sub`, `role`, `iat`, `exp`, `jti`
+
+        See `ADR-0007` for full token design.
+
+  # ==========================================================================
+  # Reusable Parameters
+  # ==========================================================================
+  parameters:
+
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: |
+        Client-provided trace ID. Server validates format
+        `^[A-Za-z0-9_-]{1,64}$`. Invalid/missing → server generates UUID v4.
+        Always echoed in response header.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{1,64}$'
+        example: req_550e8400e29b41d4a716446655440000
+
+    PaginationLimit:
+      name: limit
+      in: query
+      required: false
+      description: Max items per page. Range `[1, 100]`. Default `20`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    PaginationOffset:
+      name: offset
+      in: query
+      required: false
+      description: Items to skip. Default `0`.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+    SortQuery:
+      name: sort
+      in: query
+      required: false
+      description: |
+        Sort fields comma-separated. Prefix `-` for DESC.
+
+        Example: `sort=-created_at,name`. Max 3 fields.
+        Each endpoint defines whitelisted sortable fields.
+      schema:
+        type: string
+        example: -created_at
+
+    PathIdUUID:
+      name: id
+      in: path
+      required: true
+      description: Resource UUID
+      schema:
+        type: string
+        format: uuid
+        example: 550e8400-e29b-41d4-a716-446655440000
+
+    PathPropertyId:
+      name: pid
+      in: path
+      required: true
+      description: Property UUID
+      schema:
+        type: string
+        format: uuid
+
+    PathRoomId:
+      name: rid
+      in: path
+      required: true
+      description: Room UUID
+      schema:
+        type: string
+        format: uuid
+
+    PathTenantId:
+      name: tid
+      in: path
+      required: true
+      description: Tenant UUID
+      schema:
+        type: string
+        format: uuid
+
+    PathLeaseId:
+      name: lid
+      in: path
+      required: true
+      description: Lease UUID
+      schema:
+        type: string
+        format: uuid
+
+    PathInvoiceId:
+      name: iid
+      in: path
+      required: true
+      description: Invoice UUID
+      schema:
+        type: string
+        format: uuid
+
+  # ==========================================================================
+  # Shared Schemas
+  # ==========================================================================
+  schemas:
+
+    # ----- Error handling (E1 in design-decisions) -----
+
+    ErrorCode:
+      type: string
+      description: |
+        Stable error code. UPPER_SNAKE_CASE. Client switches on this field.
+
+        Full registry: `api-design-decisions.md` section 8.
+      enum:
+        # Generic
+        - VALIDATION_ERROR
+        - NOT_FOUND
+        - PERMISSION_DENIED
+        - MALFORMED_REQUEST
+        - INVALID_CONTENT_TYPE
+        - UNSUPPORTED_MEDIA_TYPE
+        - RATE_LIMIT_EXCEEDED
+        - INTERNAL_SERVER_ERROR
+        - UNKNOWN_FILTER_FIELD
+        - UNKNOWN_SORT_FIELD
+        # Auth
+        - AUTHENTICATION_REQUIRED
+        - TOKEN_INVALID
+        - TOKEN_EXPIRED
+        - USER_INACTIVE
+        - INVALID_CREDENTIALS
+        - INVALID_REFRESH_TOKEN
+        - REFRESH_TOKEN_EXPIRED
+        - REFRESH_TOKEN_REUSED
+        # Invite / password reset
+        - INVALID_INVITE_TOKEN
+        - INVITE_TOKEN_USED
+        - INVITE_TOKEN_EXPIRED
+        - INVALID_RESET_TOKEN
+        - RESET_TOKEN_USED
+        - RESET_TOKEN_EXPIRED
+        - WEAK_PASSWORD
+        - CONSENT_REQUIRED
+        # Invoice
+        - INVOICE_ALREADY_VOIDED
+        - INVOICE_IMMUTABLE
+        - DUPLICATE_INVOICE
+        - INVALID_BILLING_MONTH
+        - MISSING_METER_READING
+        - INVOICE_NOT_PAYABLE
+        # Lease
+        - LEASE_ALREADY_TERMINATED
+        - LEASE_NOT_TERMINATED
+        - LEASE_INVALID_STATE_FOR_RENEWAL
+        - ROOM_HAS_ACTIVE_LEASE
+        - INVALID_LEASE_DATES
+        - DEPOSIT_ALREADY_SETTLED
+        # Tenant / Occupant
+        - DUPLICATE_TENANT_PHONE
+        - DUPLICATE_TENANT_EMAIL
+        - TENANT_HAS_ACTIVE_LEASE
+        - TENANT_HAS_UNPAID_INVOICES
+        - TENANT_ALREADY_ARCHIVED
+        - TENANT_ANONYMIZED
+        - OCCUPANT_ALREADY_MOVED_OUT
+        - INVALID_EFFECTIVE_DATE
+        # Room / Property / Service
+        - ROOM_HAS_UNPAID_INVOICES
+        - ROOM_ALREADY_ARCHIVED
+        - DUPLICATE_ROOM_NAME
+        - PROPERTY_HAS_ROOMS
+        - INVALID_SERVICE_CONFIG
+        - SERVICE_ALREADY_ACTIVE
+        - SERVICE_ALREADY_INACTIVE
+        # Payment
+        - PAYMENT_OVERPAY
+        - INVALID_PAYMENT_DATE
+        # Meter reading
+        - READING_REFERENCED_BY_PAID_INVOICE
+
+    ValidationDetail:
+      type: object
+      required: [field, error]
+      properties:
+        field:
+          type: string
+          description: |
+            Field path. Root field = name only. Nested = dotted path.
+            Query = `query.<name>`. Path = `path.<name>`. Header = `header.<name>`.
+          example: email
+        error:
+          type: string
+          description: Human-readable error message (English)
+          example: Invalid email format
+        code:
+          type: string
+          description: Pydantic error type (optional)
+          example: value_error.email
+
+    Error:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable message (English). Wording NOT stable — do not parse.
+          example: Resource not found
+        request_id:
+          type: string
+          description: Trace ID matching `X-Request-Id` response header
+          example: req_550e8400e29b41d4a716446655440000
+        details:
+          description: |
+            Optional extra context. Array for validation errors,
+            object for business errors.
+          oneOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/ValidationDetail'
+            - type: object
+              additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+
+    # ----- Pagination envelope (D1) -----
+
+    Pagination:
+      type: object
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          example: 20
+        offset:
+          type: integer
+          minimum: 0
+          example: 0
+        total:
+          type: integer
+          minimum: 0
+          description: Total items matching filters (not just current page)
+          example: 127
+
+    # Note on list envelope:
+    # Each list endpoint defines its own response as:
+    #   type: object
+    #   required: [data, pagination]
+    #   properties:
+    #     data:
+    #       type: array
+    #       items: $ref: '#/components/schemas/<Resource>'
+    #     pagination: $ref: '#/components/schemas/Pagination'
+
+    # ----- Common primitives -----
+
+    UUID:
+      type: string
+      format: uuid
+      example: 550e8400-e29b-41d4-a716-446655440000
+
+    Timestamp:
+      type: string
+      format: date-time
+      description: ISO 8601 timestamp (UTC)
+      example: '2026-04-24T10:30:00Z'
+
+    DateOnly:
+      type: string
+      format: date
+      description: ISO 8601 date (no time)
+      example: '2026-04-24'
+
+    BillingMonth:
+      type: string
+      pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+      description: Billing month in `YYYY-MM` format
+      example: '2026-05'
+
+    # ----- User role enum -----
+
+    UserRole:
+      type: string
+      enum: [landlord, tenant]
+      description: |
+        MVP roles. Future: manager (v1.x), investor (v2.x), technician (v2.x).
+
+        **Never read from JWT claims directly** (ADR-0005) — always fetch via
+        `get_user_roles(user_id)` at service layer.
+
+    # ----- Auth — Request schemas -----
+
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: landlord@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: Min 8 chars, must contain lowercase + uppercase + digit
+          example: SecurePass123
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Nguyễn Văn A
+        phone:
+          type: string
+          nullable: true
+          pattern: '^[0-9+\-\s]{8,20}$'
+          example: '0901234567'
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: landlord@example.com
+        password:
+          type: string
+          format: password
+          example: SecurePass123
+
+    RefreshRequest:
+      type: object
+      description: |
+        Optional body — refresh token can come from cookie instead.
+        Server reads cookie first, falls back to body.
+      properties:
+        refresh_token:
+          type: string
+          description: Opaque refresh token (mobile client path)
+          example: rft_550e8400e29b41d4a716446655440000
+
+    TokenOnlyRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Opaque token string
+          example: inv_abc123def456
+          minLength: 1
+          maxLength: 255
+
+    InviteAcceptRequest:
+      type: object
+      required: [token, password, consent_pii]
+      properties:
+        token:
+          type: string
+          description: Invite token from email/link
+          example: inv_abc123def456
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: SecurePass123
+        consent_pii:
+          type: boolean
+          description: |
+            Must be `true` — explicit consent to PII processing
+            per Nghị định 13/2023/NĐ-CP (ADR-0006).
+          example: true
+
+    PasswordResetRequestBody:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+
+    PasswordResetConfirmBody:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:
+          type: string
+          description: Reset token from email
+          example: rst_xyz789
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          example: NewSecurePass123
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+          example: OldPass123
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          example: NewSecurePass456
+
+    # ----- Auth — Response schemas -----
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          description: JWT access token (TTL 3600s)
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        token_type:
+          type: string
+          enum: [Bearer]
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access token TTL in seconds
+          example: 3600
+
+    AuthSuccessResponse:
+      allOf:
+        - $ref: '#/components/schemas/TokenResponse'
+        - type: object
+          required: [user]
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+
+    InviteVerifyResponse:
+      type: object
+      required: [valid, email, tenant_name]
+      properties:
+        valid:
+          type: boolean
+          example: true
+        email:
+          type: string
+          format: email
+          description: Pre-filled email for the activation form
+          example: tenant@example.com
+        tenant_name:
+          type: string
+          description: Pre-filled name
+          example: Nguyễn Văn A
+        landlord_name:
+          type: string
+          description: For UX "you are being invited by X"
+          example: Mr Thanh
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: Operation completed successfully
+
+    # ----- User — Resource schemas -----
+
+    User:
+      type: object
+      required: [id, email, role, full_name, is_active, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        role:
+          $ref: '#/components/schemas/UserRole'
+        full_name:
+          type: string
+          example: Nguyễn Văn A
+        phone:
+          type: string
+          nullable: true
+          example: '0901234567'
+        is_active:
+          type: boolean
+          description: False when user archived/invalidated
+          example: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    UserUpdate:
+      type: object
+      description: All fields optional (PATCH semantic). Cannot change role/password/is_active.
+      properties:
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Nguyễn Văn A (updated)
+        phone:
+          type: string
+          nullable: true
+          pattern: '^[0-9+\-\s]{8,20}$'
+          example: '0987654321'
+        email:
+          type: string
+          format: email
+          example: newemail@example.com
+
+    # ----- Property — Resource schemas -----
+
+    Property:
+      type: object
+      required: [id, landlord_id, name, address, billing_day, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        landlord_id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          example: Nhà trọ Cầu Giấy
+        address:
+          type: string
+          example: 123 Xuân Thủy, Cầu Giấy, Hà Nội
+        billing_day:
+          type: integer
+          minimum: 1
+          maximum: 28
+          description: Day of month for invoice generation
+          example: 5
+        note:
+          type: string
+          nullable: true
+          example: Gần ĐH Sư phạm
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    PropertyDetail:
+      allOf:
+        - $ref: '#/components/schemas/Property'
+        - type: object
+          required: [stats]
+          properties:
+            stats:
+              type: object
+              required: [room_count, active_lease_count]
+              properties:
+                room_count:
+                  type: integer
+                  description: Non-archived rooms
+                  example: 12
+                archived_room_count:
+                  type: integer
+                  example: 2
+                active_lease_count:
+                  type: integer
+                  example: 9
+                current_month_revenue:
+                  type: integer
+                  description: Sum of paid invoices in current billing month (VND)
+                  example: 18500000
+
+    PropertyCreate:
+      type: object
+      required: [name, address]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Nhà trọ Cầu Giấy
+        address:
+          type: string
+          minLength: 1
+          example: 123 Xuân Thủy, Cầu Giấy, Hà Nội
+        billing_day:
+          type: integer
+          minimum: 1
+          maximum: 28
+          default: 1
+          description: Default billing day for leases in this property
+          example: 5
+        note:
+          type: string
+          nullable: true
+
+    PropertyUpdate:
+      type: object
+      description: PATCH — all fields optional
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        address:
+          type: string
+          minLength: 1
+        billing_day:
+          type: integer
+          minimum: 1
+          maximum: 28
+        note:
+          type: string
+          nullable: true
+
+    PropertyListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Property'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Room — Resource schemas -----
+
+    RoomStatus:
+      type: string
+      enum: [vacant, occupied, expiring_soon, lease_expired]
+      description: |
+        Computed from related Lease status (not stored).
+
+        - `vacant`: no active/expiring/expired lease
+        - `occupied`: lease.status = active
+        - `expiring_soon`: lease.status = expiring_soon (≤ 30d to end_date)
+        - `lease_expired`: lease.status = expired (tenant still there, lease ended)
+
+    Room:
+      type: object
+      required: [id, property_id, display_name, is_archived, status, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        property_id:
+          $ref: '#/components/schemas/UUID'
+        display_name:
+          type: string
+          description: Free text (e.g. "P101", "Phòng 3A"). Unique per property (non-archived).
+          example: P101
+        floor:
+          type: integer
+          nullable: true
+          example: 1
+        max_occupants:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: NULL = unlimited
+          example: 4
+        default_rent:
+          type: integer
+          nullable: true
+          description: Default rent (VND) used as suggestion when creating leases
+          example: 2500000
+        note:
+          type: string
+          nullable: true
+        is_archived:
+          type: boolean
+          example: false
+        archived_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          $ref: '#/components/schemas/RoomStatus'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    RoomCreate:
+      type: object
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: P101
+        floor:
+          type: integer
+          nullable: true
+        max_occupants:
+          type: integer
+          nullable: true
+          minimum: 1
+        default_rent:
+          type: integer
+          nullable: true
+          minimum: 0
+        note:
+          type: string
+          nullable: true
+
+    RoomUpdate:
+      type: object
+      description: PATCH — all optional. Cannot change `property_id`, `is_archived` (use archive action).
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        floor:
+          type: integer
+          nullable: true
+        max_occupants:
+          type: integer
+          nullable: true
+          minimum: 1
+        default_rent:
+          type: integer
+          nullable: true
+          minimum: 0
+        note:
+          type: string
+          nullable: true
+
+    RoomListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Room'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Tenant — Resource schemas -----
+
+    TenantStatus:
+      type: string
+      enum: [pending, active, moved_out]
+      description: |
+        Computed from user_id + active lease count (not stored):
+        - `pending`: user_id IS NOT NULL + no active lease yet
+        - `active`: has ≥1 active lease
+        - `moved_out`: is_archived = TRUE
+
+    Tenant:
+      type: object
+      required: [id, landlord_id, name, phone, is_archived, status, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        landlord_id:
+          $ref: '#/components/schemas/UUID'
+        user_id:
+          description: Nullable — NULL until invite accepted
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          example: Nguyễn Văn A
+        phone:
+          type: string
+          example: '0901234567'
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: a@example.com
+        id_card_number:
+          type: string
+          nullable: true
+          description: CCCD/CMND number
+          example: '001234567890'
+        note:
+          type: string
+          nullable: true
+        is_archived:
+          type: boolean
+          example: false
+        archived_at:
+          type: string
+          format: date-time
+          nullable: true
+        move_out_date:
+          type: string
+          format: date
+          nullable: true
+          description: User-entered move-out date (distinct from `archived_at` timestamp)
+        anonymized_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when PII is anonymized per ADR-0006 (5-year retention)
+        promoted_from_occupant_id:
+          description: Set if this tenant was created via occupant promote (F4)
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        status:
+          $ref: '#/components/schemas/TenantStatus'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    TenantCreate:
+      type: object
+      required: [name, phone]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Nguyễn Văn A
+        phone:
+          type: string
+          pattern: '^[0-9+\-\s]{8,20}$'
+          example: '0901234567'
+        email:
+          type: string
+          format: email
+          nullable: true
+        id_card_number:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    TenantUpdate:
+      type: object
+      description: PATCH — all optional. Cannot change status fields directly.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        phone:
+          type: string
+          pattern: '^[0-9+\-\s]{8,20}$'
+        email:
+          type: string
+          format: email
+          nullable: true
+        id_card_number:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    TenantArchiveRequest:
+      type: object
+      properties:
+        move_out_date:
+          type: string
+          format: date
+          description: |
+            Actual move-out date. If not provided, defaults to TODAY.
+            Must be ≤ TODAY.
+          example: '2026-05-15'
+        reason:
+          type: string
+          nullable: true
+          maxLength: 500
+
+    InviteLinkResponse:
+      type: object
+      required: [invite_link, expires_at]
+      properties:
+        invite_link:
+          type: string
+          format: uri
+          description: Shareable URL containing the token
+          example: https://rms.example.com/invite/inv_abc123def456
+        token:
+          type: string
+          description: Raw token (in case frontend needs to generate custom URL)
+          example: inv_abc123def456
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    TenantWithInvite:
+      allOf:
+        - $ref: '#/components/schemas/Tenant'
+        - type: object
+          required: [invite]
+          properties:
+            invite:
+              $ref: '#/components/schemas/InviteLinkResponse'
+
+    TenantListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tenant'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Occupant — Resource schemas -----
+
+    Occupant:
+      type: object
+      required: [id, tenant_id, name, moved_in_date, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        tenant_id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          example: Nguyễn Thị B
+        moved_in_date:
+          $ref: '#/components/schemas/DateOnly'
+        moved_out_date:
+          type: string
+          format: date
+          nullable: true
+          description: NULL = still living. Use for soft-remove via date.
+        id_card_number:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    OccupantCreate:
+      type: object
+      required: [name, moved_in_date]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        moved_in_date:
+          $ref: '#/components/schemas/DateOnly'
+        id_card_number:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    OccupantUpdate:
+      type: object
+      description: PATCH — all optional. Setting `moved_out_date` = soft-remove via date.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        moved_in_date:
+          $ref: '#/components/schemas/DateOnly'
+        moved_out_date:
+          type: string
+          format: date
+          nullable: true
+          description: Must be >= moved_in_date if provided
+        id_card_number:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    OccupantListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Occupant'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Promote Occupant (F4 atomic action) -----
+
+    PromoteOccupantRequest:
+      type: object
+      required: [effective_date, tenant_info]
+      properties:
+        effective_date:
+          $ref: '#/components/schemas/DateOnly'
+        tenant_info:
+          type: object
+          required: [name, phone]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+              example: Nguyễn Thị B
+            phone:
+              type: string
+              pattern: '^[0-9+\-\s]{8,20}$'
+              example: '0909876543'
+            email:
+              type: string
+              format: email
+              nullable: true
+            id_card_number:
+              type: string
+              nullable: true
+
+    PromoteOccupantResponse:
+      type: object
+      required: [new_tenant, updated_occupant, updated_lease]
+      properties:
+        new_tenant:
+          $ref: '#/components/schemas/TenantWithInvite'
+        updated_occupant:
+          $ref: '#/components/schemas/Occupant'
+        updated_lease:
+          type: object
+          required: [id, tenant_id, previous_tenant_id]
+          description: |
+            Partial Lease projection showing the tenant_id swap.
+            Full Lease schema in Leases section.
+          properties:
+            id:
+              $ref: '#/components/schemas/UUID'
+            tenant_id:
+              $ref: '#/components/schemas/UUID'
+            previous_tenant_id:
+              $ref: '#/components/schemas/UUID'
+
+    # ----- Meter Reading — Resource schemas -----
+
+    MeterReading:
+      type: object
+      required: [id, service_id, reading_date, value, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        service_id:
+          $ref: '#/components/schemas/UUID'
+        room_id:
+          nullable: true
+          description: NULL for shared meter readings
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        reading_date:
+          $ref: '#/components/schemas/DateOnly'
+        value:
+          type: integer
+          minimum: 0
+          description: Meter reading value (integer, unit defined by Service.unit)
+          example: 1234
+        note:
+          type: string
+          nullable: true
+        created_by_user_id:
+          $ref: '#/components/schemas/UUID'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    MeterReadingDetail:
+      allOf:
+        - $ref: '#/components/schemas/MeterReading'
+        - type: object
+          properties:
+            previous_reading:
+              nullable: true
+              description: |
+                Prior reading for same (service_id, room_id).
+                Useful for computing consumption delta in UI.
+              allOf:
+                - $ref: '#/components/schemas/MeterReading'
+            referenced_invoice_id:
+              nullable: true
+              description: |
+                Invoice that used this reading (if any).
+                NULL = not yet billed.
+              allOf:
+                - $ref: '#/components/schemas/UUID'
+            referenced_invoice_status:
+              nullable: true
+              description: Status of referenced invoice (for mutability rules)
+              allOf:
+                - $ref: '#/components/schemas/InvoiceStatus'
+
+    MeterReadingListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MeterReading'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    MeterReadingUpdate:
+      type: object
+      description: |
+        PATCH — only `value` and `note` editable.
+        `service_id`, `room_id`, `reading_date` immutable (re-delete + re-create if needed).
+      properties:
+        value:
+          type: integer
+          minimum: 0
+        note:
+          type: string
+          nullable: true
+
+    MeterReadingUpdateResponse:
+      type: object
+      required: [reading]
+      properties:
+        reading:
+          $ref: '#/components/schemas/MeterReading'
+        warning:
+          type: string
+          nullable: true
+          description: |
+            Set if reading referenced by unpaid invoice.
+            Landlord advised to void + recreate invoice if consumption changed.
+          example: This reading is referenced by unpaid Invoice 5/2026 — invoice not auto-updated.
+
+    # ----- Meter Reading — Batch schemas -----
+
+    MeterReadingBatchItem:
+      type: object
+      required: [service_id, value]
+      properties:
+        service_id:
+          $ref: '#/components/schemas/UUID'
+        room_id:
+          nullable: true
+          description: |
+            Required for `meter_scope = per_room`.
+            Must be NULL for `meter_scope = shared`.
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        value:
+          type: integer
+          minimum: 0
+          example: 1234
+        note:
+          type: string
+          nullable: true
+
+    MeterReadingBatchRequest:
+      type: object
+      required: [reading_date, readings]
+      properties:
+        reading_date:
+          $ref: '#/components/schemas/DateOnly'
+        readings:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/MeterReadingBatchItem'
+
+    MeterReadingWarning:
+      type: object
+      required: [index, type, message]
+      properties:
+        index:
+          type: integer
+          description: 0-based index in `readings` array
+          example: 0
+        type:
+          type: string
+          enum:
+            - value_lower_than_previous
+            - large_gap_since_previous
+            - missing_initial_reading
+        message:
+          type: string
+          example: Reading 1234 < previous 1250 (dated 2026-04-01)
+
+    MeterReadingBatchResponse:
+      type: object
+      required: [data, summary]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MeterReading'
+          description: Created readings (in same order as request)
+        summary:
+          type: object
+          required: [created_count, warning_count]
+          properties:
+            created_count:
+              type: integer
+              example: 3
+            warning_count:
+              type: integer
+              example: 1
+            warnings:
+              type: array
+              items:
+                $ref: '#/components/schemas/MeterReadingWarning'
+
+    # ----- Invoice — Enums -----
+
+    InvoiceStatus:
+      type: string
+      enum: [unpaid, partial, paid, void]
+      description: |
+        Computed from payments + voided_at (not stored):
+        - `unpaid`: total_paid = 0, voided_at IS NULL
+        - `partial`: 0 < total_paid < total_amount
+        - `paid`: total_paid >= total_amount
+        - `void`: voided_at IS NOT NULL (stored state)
+
+    LineType:
+      type: string
+      enum: [rent, service, adjustment]
+      description: |
+        - `rent`: room rent (pro-rated if partial month)
+        - `service`: from Service (electricity, water, etc.)
+        - `adjustment`: manual line added by Landlord (late fee, discount, correction)
+
+    VoidedReason:
+      type: string
+      enum:
+        - wrong_meter_reading
+        - wrong_rent
+        - wrong_service_config
+        - tenant_dispute
+        - duplicate
+        - other
+      description: |
+        Reason for voiding. `other` requires non-empty `void_note`
+        (enforced at service layer).
+
+    # ----- Invoice Line Item -----
+
+    InvoiceLineItem:
+      type: object
+      required: [id, invoice_id, line_type, description, amount, billing_period_start, billing_period_end, sort_order]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        invoice_id:
+          $ref: '#/components/schemas/UUID'
+        line_type:
+          $ref: '#/components/schemas/LineType'
+        service_id:
+          nullable: true
+          description: Required when line_type = service; NULL for rent/adjustment
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        description:
+          type: string
+          description: |
+            Flattened human-readable text.
+            For service with meter: "Điện 120 kWh (1110 → 1230)"
+            For rent: "Tiền phòng tháng 5/2026"
+            For adjustment: landlord-entered text
+          example: Điện 120 kWh (1110 → 1230)
+        amount:
+          type: integer
+          description: Line total (VND). Can be negative for adjustment line (discount).
+          example: 420000
+        quantity:
+          type: number
+          nullable: true
+          description: Consumption (for per_meter) or person count (for per_person)
+          example: 120
+        unit_price:
+          type: integer
+          nullable: true
+          description: Snapshot price per unit at invoice creation
+          example: 3500
+        billing_period_start:
+          $ref: '#/components/schemas/DateOnly'
+        billing_period_end:
+          $ref: '#/components/schemas/DateOnly'
+        meter_reading_start_id:
+          nullable: true
+          description: Beginning reading for per_meter line
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        meter_reading_end_id:
+          nullable: true
+          description: Ending reading for per_meter line
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        sort_order:
+          type: integer
+          description: Display order within invoice
+          example: 1
+
+    # ----- Invoice — Resource schemas (list vs detail) -----
+
+    Invoice:
+      type: object
+      description: |
+        List shape — no line_items embedded (performance).
+        Use `/invoices/{id}` for detail with line_items.
+      required:
+        - id
+        - lease_id
+        - landlord_id
+        - invoice_number
+        - billing_month
+        - total_amount
+        - total_paid
+        - status
+        - created_at
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        lease_id:
+          $ref: '#/components/schemas/UUID'
+        landlord_id:
+          $ref: '#/components/schemas/UUID'
+        invoice_number:
+          type: string
+          description: Human-readable identifier, unique per landlord (excluding voided)
+          example: INV-2026-05-007
+        billing_month:
+          $ref: '#/components/schemas/BillingMonth'
+        total_amount:
+          type: integer
+          minimum: 0
+          example: 2920000
+        total_paid:
+          type: integer
+          minimum: 0
+          description: Sum of non-voided payments on this invoice
+          example: 0
+        line_item_count:
+          type: integer
+          description: Number of line items (for list UI summary without embedding)
+          example: 3
+        status:
+          $ref: '#/components/schemas/InvoiceStatus'
+        voided_at:
+          type: string
+          format: date-time
+          nullable: true
+        voided_reason:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/VoidedReason'
+        void_note:
+          type: string
+          nullable: true
+        voided_by_user_id:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    InvoiceDetail:
+      allOf:
+        - $ref: '#/components/schemas/Invoice'
+        - type: object
+          required: [line_items]
+          properties:
+            line_items:
+              type: array
+              items:
+                $ref: '#/components/schemas/InvoiceLineItem'
+              description: Always embedded in detail endpoint (not in list)
+
+    InvoiceListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+          description: List shape — each item has `line_item_count` not `line_items`
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Invoice — Preview/Commit schemas (F1 pattern) -----
+
+    InvoicePreviewLineItem:
+      type: object
+      description: |
+        Line item shape in preview (before DB persist — no IDs).
+      required: [line_type, description, amount, billing_period_start, billing_period_end]
+      properties:
+        line_type:
+          $ref: '#/components/schemas/LineType'
+        service_id:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        service_name:
+          type: string
+          nullable: true
+          description: For UI — actual name used in description
+          example: Điện
+        description:
+          type: string
+        amount:
+          type: integer
+        quantity:
+          type: number
+          nullable: true
+        unit_price:
+          type: integer
+          nullable: true
+        billing_period_start:
+          $ref: '#/components/schemas/DateOnly'
+        billing_period_end:
+          $ref: '#/components/schemas/DateOnly'
+
+    InvoicePreviewWarning:
+      type: object
+      required: [type, message]
+      properties:
+        type:
+          type: string
+          enum:
+            - missing_meter_reading
+            - zero_consumption
+            - partial_month_prorated
+            - service_inactive
+        message:
+          type: string
+        service_id:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+
+    InvoicePreviewItem:
+      type: object
+      required: [lease_id, room_display_name, tenant_name, billing_month, total_amount, line_items]
+      properties:
+        lease_id:
+          $ref: '#/components/schemas/UUID'
+        room_display_name:
+          type: string
+          example: P101
+        tenant_name:
+          type: string
+          example: Nguyễn Văn A
+        billing_month:
+          $ref: '#/components/schemas/BillingMonth'
+        total_amount:
+          type: integer
+          minimum: 0
+          example: 2920000
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoicePreviewLineItem'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoicePreviewWarning'
+
+    InvoiceBatchRequest:
+      type: object
+      required: [billing_month]
+      properties:
+        billing_month:
+          $ref: '#/components/schemas/BillingMonth'
+        exclude_lease_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/UUID'
+          description: Leases to skip in this batch (client UI checkbox-style)
+          default: []
+
+    InvoiceSingleRequest:
+      type: object
+      required: [billing_month]
+      properties:
+        billing_month:
+          $ref: '#/components/schemas/BillingMonth'
+
+    InvoiceBatchPreviewResponse:
+      type: object
+      required: [data, summary]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoicePreviewItem'
+        summary:
+          type: object
+          required: [total_invoices, total_amount, excluded_count, warning_count]
+          properties:
+            total_invoices:
+              type: integer
+              description: Number of invoices that WOULD be created
+              example: 8
+            total_amount:
+              type: integer
+              description: Sum of all totals (VND)
+              example: 18500000
+            excluded_count:
+              type: integer
+              example: 2
+            warning_count:
+              type: integer
+              description: Total warnings across all preview items
+              example: 1
+
+    InvoiceBatchCommitRequest:
+      allOf:
+        - $ref: '#/components/schemas/InvoiceBatchRequest'
+        - type: object
+          properties:
+            on_duplicate:
+              type: string
+              enum: [skip, error]
+              default: skip
+              description: |
+                - `skip`: quietly skip leases with existing non-voided invoice for month
+                - `error`: reject entire batch if any duplicate
+
+    InvoiceBatchCommitResponse:
+      type: object
+      required: [data, summary]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceDetail'
+          description: Created invoices (with line_items embedded)
+        summary:
+          type: object
+          required: [created_count, skipped_count]
+          properties:
+            created_count:
+              type: integer
+              example: 7
+            skipped_count:
+              type: integer
+              description: Leases skipped due to duplicate (when on_duplicate=skip)
+              example: 1
+            skipped_lease_ids:
+              type: array
+              items:
+                $ref: '#/components/schemas/UUID'
+
+    # ----- Invoice — Void action -----
+
+    VoidInvoiceRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          $ref: '#/components/schemas/VoidedReason'
+        note:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: |
+            Required when `reason = other`.
+            Shown in audit log for future review.
+
+    # ----- Payment schemas (Session 7) -----
+
+    PaymentMethod:
+      type: string
+      enum: [cash, bank_transfer, ewallet, other]
+      description: |
+        How the payment was received:
+        - `cash`: tiền mặt
+        - `bank_transfer`: chuyển khoản ngân hàng
+        - `ewallet`: MoMo / ZaloPay / VNPay / etc.
+        - `other`: khác (landlord ghi chú trong `note`)
+
+    Payment:
+      type: object
+      required: [id, invoice_id, amount, method, paid_at, recorded_by_user_id, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        invoice_id:
+          $ref: '#/components/schemas/UUID'
+        amount:
+          type: integer
+          minimum: 1
+          description: Payment amount in VND (integer, no decimals)
+          example: 1500000
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        paid_at:
+          $ref: '#/components/schemas/DateOnly'
+        note:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: Optional reference (bank txn ID, e-wallet reference, etc.)
+          example: Vietcombank TXN 2026042212345
+        recorded_by_user_id:
+          $ref: '#/components/schemas/UUID'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    PaymentCreate:
+      type: object
+      required: [amount, method, paid_at]
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          example: 1500000
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        paid_at:
+          $ref: '#/components/schemas/DateOnly'
+        note:
+          type: string
+          nullable: true
+          maxLength: 500
+
+    PaymentCreateResponse:
+      type: object
+      required: [payment, updated_invoice]
+      description: |
+        Includes updated invoice projection for optimistic UI update
+        (avoid separate GET after POST).
+      properties:
+        payment:
+          $ref: '#/components/schemas/Payment'
+        updated_invoice:
+          type: object
+          required: [id, status, total_paid]
+          description: Partial Invoice projection after status recompute
+          properties:
+            id:
+              $ref: '#/components/schemas/UUID'
+            status:
+              $ref: '#/components/schemas/InvoiceStatus'
+            total_paid:
+              type: integer
+              minimum: 0
+
+    PaymentDeleteResponse:
+      type: object
+      required: [deleted_payment_id, updated_invoice]
+      properties:
+        deleted_payment_id:
+          $ref: '#/components/schemas/UUID'
+        updated_invoice:
+          type: object
+          required: [id, status, total_paid]
+          properties:
+            id:
+              $ref: '#/components/schemas/UUID'
+            status:
+              $ref: '#/components/schemas/InvoiceStatus'
+            total_paid:
+              type: integer
+              minimum: 0
+
+    PaymentListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payment'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Notification schemas (Session 7) -----
+
+    NotificationType:
+      type: string
+      enum:
+        - lease_expiring_soon
+        - lease_expired
+        - invoice_created
+        - invoice_overdue
+        - invoice_reminder
+        - payment_received
+      description: |
+        - `lease_expiring_soon`: lease end_date ≤ 30 days (Landlord)
+        - `lease_expired`: lease end_date passed, no termination (Landlord)
+        - `invoice_created`: new invoice issued (Tenant)
+        - `invoice_overdue`: invoice unpaid past billing_day + 15 (Landlord + Tenant)
+        - `invoice_reminder`: day 5 of month, no invoice yet for property (Landlord)
+        - `payment_received`: payment recorded (Landlord — self-notification)
+
+    Notification:
+      type: object
+      required: [id, recipient_id, type, title, body, is_read, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        recipient_id:
+          $ref: '#/components/schemas/UUID'
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        title:
+          type: string
+          example: Hợp đồng sắp hết hạn
+        body:
+          type: string
+          example: Hợp đồng phòng P101 (Nguyễn Văn A) sẽ hết hạn vào 20/05/2026.
+        related_resource_type:
+          type: string
+          nullable: true
+          enum: [lease, invoice, payment, tenant, room, property]
+          description: For deep-linking in UI
+          example: lease
+        related_resource_id:
+          nullable: true
+          description: For deep-linking in UI
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        is_read:
+          type: boolean
+          example: false
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    NotificationListResponse:
+      type: object
+      description: Extended envelope with `unread_count` (across ALL unread, not just current page)
+      required: [data, pagination, unread_count]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        unread_count:
+          type: integer
+          minimum: 0
+          description: Total unread across entire collection (for badge display)
+          example: 3
+
+    NotificationMarkAllResponse:
+      type: object
+      required: [marked_count]
+      properties:
+        marked_count:
+          type: integer
+          minimum: 0
+          example: 3
+
+    # ==========================================================================
+    # (Below: Lease + Service schemas — continuation of schemas section)
+    # ==========================================================================
+
+    LeaseStatus:
+      type: string
+      enum: [draft, active, expiring_soon, expired, terminated]
+      description: |
+        Computed from start_date, end_date, terminated_at:
+        - `draft`: start_date > TODAY (not yet started)
+        - `active`: start_date <= TODAY AND end_date > TODAY + 30d AND terminated_at IS NULL
+        - `expiring_soon`: in active range AND end_date between TODAY and TODAY + 30d
+        - `expired`: end_date < TODAY AND terminated_at IS NULL (grace period)
+        - `terminated`: terminated_at IS NOT NULL (stored state)
+
+    DepositStatus:
+      type: string
+      enum: [held, returned, forfeited, deducted]
+      description: |
+        - `held`: initial state (default), deposit kept by landlord
+        - `returned`: refunded to tenant (full amount or zero for rollover)
+        - `forfeited`: kept by landlord (breach of contract)
+        - `deducted`: partial refund, some deducted for damages
+
+    # ----- Lease — Resource schemas -----
+
+    Lease:
+      type: object
+      required: [id, room_id, tenant_id, start_date, end_date, rent_amount, deposit_amount, deposit_status, billing_day, status, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        room_id:
+          $ref: '#/components/schemas/UUID'
+        tenant_id:
+          $ref: '#/components/schemas/UUID'
+        previous_lease_id:
+          nullable: true
+          description: Set by renewal — links to the lease this one succeeded
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+        start_date:
+          $ref: '#/components/schemas/DateOnly'
+        end_date:
+          $ref: '#/components/schemas/DateOnly'
+        rent_amount:
+          type: integer
+          minimum: 0
+          description: Rent (VND). Snapshot at lease creation — not live from Room.
+          example: 2500000
+        deposit_amount:
+          type: integer
+          minimum: 0
+          description: Deposit (VND). Snapshot at lease creation.
+          example: 5000000
+        deposit_status:
+          $ref: '#/components/schemas/DepositStatus'
+        deposit_amount_returned:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Set when deposit settled (returned/deducted)
+        deposit_note:
+          type: string
+          nullable: true
+          description: Deduction reason or rollover note
+        billing_day:
+          type: integer
+          minimum: 1
+          maximum: 28
+          example: 5
+        note:
+          type: string
+          nullable: true
+        terminated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: System timestamp when termination recorded
+        terminated_date:
+          type: string
+          format: date
+          nullable: true
+          description: User-entered actual termination date (can differ from terminated_at)
+        termination_reason:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/LeaseStatus'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    LeaseCreate:
+      type: object
+      required: [tenant_id, start_date, end_date, rent_amount, deposit_amount, billing_day]
+      properties:
+        tenant_id:
+          $ref: '#/components/schemas/UUID'
+        start_date:
+          $ref: '#/components/schemas/DateOnly'
+        end_date:
+          $ref: '#/components/schemas/DateOnly'
+        rent_amount:
+          type: integer
+          minimum: 0
+          example: 2500000
+        deposit_amount:
+          type: integer
+          minimum: 0
+          example: 5000000
+        billing_day:
+          type: integer
+          minimum: 1
+          maximum: 28
+          example: 5
+        note:
+          type: string
+          nullable: true
+
+    LeaseUpdate:
+      type: object
+      description: |
+        PATCH with restricted field set for active/expiring leases.
+        Only `end_date` and `note` permitted.
+      properties:
+        end_date:
+          type: string
+          format: date
+          description: Must be >= start_date
+        note:
+          type: string
+          nullable: true
+
+    LeaseListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lease'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ----- Lease — Action schemas (terminate, settle-deposit, renew) -----
+
+    TerminateLeaseRequest:
+      type: object
+      required: [terminated_date]
+      properties:
+        terminated_date:
+          type: string
+          format: date
+          description: |
+            Actual termination date. Typically <= TODAY.
+            Used for pro-rata final invoice calculation.
+          example: '2026-05-15'
+        reason:
+          type: string
+          nullable: true
+          maxLength: 500
+          example: Tenant moved to new city
+
+    TerminateLeaseResponse:
+      type: object
+      required: [lease, pending_final_invoice]
+      properties:
+        lease:
+          $ref: '#/components/schemas/Lease'
+        pending_final_invoice:
+          type: boolean
+          description: |
+            Hint for UI: true if landlord should create final invoice
+            (termination happened mid-billing-period and no invoice exists yet).
+          example: true
+        suggested_billing_month:
+          $ref: '#/components/schemas/BillingMonth'
+
+    SettleDepositRequest:
+      type: object
+      required: [deposit_status]
+      properties:
+        deposit_status:
+          type: string
+          enum: [returned, forfeited, deducted]
+          description: Cannot set to `held` via this action (held = initial state only)
+        amount_returned:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: |
+            Required if `deposit_status = deducted`.
+            For `returned`: optional (defaults to full deposit_amount, or 0 for rollover renewal).
+            For `forfeited`: must be null or 0.
+          example: 4000000
+        deduction_note:
+          type: string
+          nullable: true
+          maxLength: 500
+          example: 50k deducted for broken window
+
+    SettleDepositResponse:
+      type: object
+      required: [lease]
+      properties:
+        lease:
+          $ref: '#/components/schemas/Lease'
+        tenant_auto_archived:
+          type: boolean
+          description: True if tenant had no other active lease and was auto-archived
+          example: false
+
+    RenewLeaseRequest:
+      type: object
+      required: [start_date, end_date, rent_amount]
+      properties:
+        start_date:
+          $ref: '#/components/schemas/DateOnly'
+        end_date:
+          $ref: '#/components/schemas/DateOnly'
+        rent_amount:
+          type: integer
+          minimum: 0
+          description: May differ from old lease (price adjustment)
+        deposit_amount:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: If null, reuses old lease deposit_amount (rollover pattern)
+        billing_day:
+          type: integer
+          minimum: 1
+          maximum: 28
+          nullable: true
+          description: If null, reuses old lease billing_day
+        note:
+          type: string
+          nullable: true
+
+    RenewLeaseResponse:
+      type: object
+      required: [new_lease, previous_lease_id]
+      properties:
+        new_lease:
+          $ref: '#/components/schemas/Lease'
+        previous_lease_id:
+          $ref: '#/components/schemas/UUID'
+
+    # ----- Service — Enums -----
+
+    BillingType:
+      type: string
+      enum: [per_meter, per_person, fixed]
+      description: |
+        - `per_meter`: charged per unit consumed (e.g. electricity kWh).
+          Requires `unit` + `meter_scope`.
+        - `per_person`: charged per occupant (e.g. trash fee × num_people)
+        - `fixed`: flat monthly fee (e.g. internet)
+
+    ServiceScope:
+      type: string
+      enum: [all_rooms, selected_rooms]
+      description: |
+        - `all_rooms`: applies to every room in property (default)
+        - `selected_rooms`: applies to rooms in `applied_room_ids` only
+
+    MeterScope:
+      type: string
+      enum: [shared, per_room]
+      description: |
+        Only used when `billing_type = per_meter`:
+        - `shared`: one meter for a set of rooms (divide by occupant count)
+        - `per_room`: each room has its own meter (reading per room)
+
+    # ----- Service — Resource schemas -----
+
+    Service:
+      type: object
+      required: [id, property_id, name, billing_type, price, scope, is_active, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        property_id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          example: Điện
+        billing_type:
+          $ref: '#/components/schemas/BillingType'
+        price:
+          type: integer
+          minimum: 0
+          description: Price per unit/person/month depending on billing_type
+          example: 3500
+        unit:
+          type: string
+          nullable: true
+          description: Required when billing_type = per_meter (e.g. "kWh", "m³")
+          example: kWh
+        meter_scope:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/MeterScope'
+        scope:
+          $ref: '#/components/schemas/ServiceScope'
+        applied_room_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/UUID'
+          description: |
+            Populated when scope = selected_rooms.
+            Empty array when scope = all_rooms.
+        note:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+          default: true
+          example: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    ServiceCreate:
+      type: object
+      required: [name, billing_type, price, scope]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Điện
+        billing_type:
+          $ref: '#/components/schemas/BillingType'
+        price:
+          type: integer
+          minimum: 0
+          example: 3500
+        unit:
+          type: string
+          nullable: true
+          example: kWh
+        meter_scope:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/MeterScope'
+        scope:
+          $ref: '#/components/schemas/ServiceScope'
+        applied_room_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/UUID'
+          description: Required non-empty when scope = selected_rooms
+        note:
+          type: string
+          nullable: true
+
+    ServiceUpdate:
+      type: object
+      description: |
+        PATCH — cannot change `billing_type`, `unit`, `meter_scope`, `price`
+        (immutable fields per Phase 2 decision).
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        scope:
+          $ref: '#/components/schemas/ServiceScope'
+        applied_room_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/UUID'
+          description: |
+            PATCH replaces entire array (not merge). Must match scope rules.
+        note:
+          type: string
+          nullable: true
+
+    ServiceListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Service'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+  # ==========================================================================
+  # Reusable Responses
+  # ==========================================================================
+  responses:
+
+    BadRequest:
+      description: Malformed request — JSON parse error, wrong Content-Type, unknown filter/sort field
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            malformed_json:
+              summary: JSON parse error
+              value:
+                error:
+                  code: MALFORMED_REQUEST
+                  message: Request body is not valid JSON
+                  request_id: req_abc123
+            unknown_filter:
+              summary: Unknown filter field
+              value:
+                error:
+                  code: UNKNOWN_FILTER_FIELD
+                  message: "Unknown filter field 'foo'. Allowed fields: [status, lease_id, billing_month]"
+                  request_id: req_abc123
+
+    Unauthorized:
+      description: |
+        Authentication required or invalid. Includes missing token,
+        expired token, invalid signature, inactive user.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            no_token:
+              summary: Missing Authorization header
+              value:
+                error:
+                  code: AUTHENTICATION_REQUIRED
+                  message: Valid authentication token required
+                  request_id: req_abc123
+            token_expired:
+              summary: JWT expired
+              value:
+                error:
+                  code: TOKEN_EXPIRED
+                  message: Access token expired
+                  request_id: req_abc123
+
+    Forbidden:
+      description: Authenticated but role does not have permission
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: PERMISSION_DENIED
+              message: Insufficient permission for this action
+              request_id: req_abc123
+
+    NotFound:
+      description: |
+        Resource not found OR ownership denied (information leakage protection —
+        returns 404 instead of 403 when user authenticated but does not own resource).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: NOT_FOUND
+              message: Resource not found
+              request_id: req_abc123
+
+    Conflict:
+      description: |
+        Valid request, invalid resource state.
+        E.g. voiding already-voided invoice, archiving tenant with active lease.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            already_voided:
+              summary: Invoice already voided
+              value:
+                error:
+                  code: INVOICE_ALREADY_VOIDED
+                  message: Cannot void an invoice that is already voided
+                  request_id: req_abc123
+                  details:
+                    invoice_id: 550e8400-e29b-41d4-a716-446655440000
+                    voided_at: '2026-04-20T10:00:00Z'
+            tenant_has_lease:
+              summary: Archive blocked — active lease
+              value:
+                error:
+                  code: TENANT_HAS_ACTIVE_LEASE
+                  message: Cannot archive tenant with active lease
+                  request_id: req_abc123
+                  details:
+                    tenant_id: 550e8400-e29b-41d4-a716-446655440000
+                    active_lease_id: 660e8400-e29b-41d4-a716-446655440001
+
+    UnprocessableEntity:
+      description: |
+        Validation failed. Body parse OK but field values invalid
+        (format, business rules on input).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            pydantic_validation:
+              summary: Schema validation fail
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Request validation failed
+                  request_id: req_abc123
+                  details:
+                    - field: email
+                      error: Invalid email format
+                      code: value_error.email
+                    - field: billing_day
+                      error: Ensure this value is less than or equal to 28
+                      code: value_error.number.not_le
+            weak_password:
+              summary: Business validation fail
+              value:
+                error:
+                  code: WEAK_PASSWORD
+                  message: Password does not meet security policy
+                  request_id: req_abc123
+                  details:
+                    min_length: 8
+                    requires: [lowercase, uppercase, digit]
+
+    TooManyRequests:
+      description: Rate limit exceeded (Phase 4 — password reset, login throttle)
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            description: Seconds until next allowed request
+            example: 60
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: RATE_LIMIT_EXCEEDED
+              message: Too many requests. Try again later.
+              request_id: req_abc123
+
+    InternalServerError:
+      description: Unexpected server error. Log `request_id` for debugging.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: INTERNAL_SERVER_ERROR
+              message: An unexpected error occurred
+              request_id: req_abc123
