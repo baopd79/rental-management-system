@@ -1091,7 +1091,7 @@ paths:
         use `/users/me/change-password` after login (or `/auth/password-reset/request`).
 
         Guards:
-        - Tenant not archived → 409 `TENANT_ALREADY_REACTIVATED` (reuse `TENANT_ALREADY_ARCHIVED` semantics — inverse)
+        - Tenant not archived → 409 `TENANT_NOT_ARCHIVED` (already active)
         - Tenant anonymized (PII purged after 5 years) → 409 `TENANT_ANONYMIZED`
       operationId: tenantsReactivate
       responses:
@@ -3016,6 +3016,7 @@ components:
         - TENANT_HAS_ACTIVE_LEASE
         - TENANT_HAS_UNPAID_INVOICES
         - TENANT_ALREADY_ARCHIVED
+        - TENANT_NOT_ARCHIVED
         - TENANT_ANONYMIZED
         - OCCUPANT_ALREADY_MOVED_OUT
         - INVALID_EFFECTIVE_DATE

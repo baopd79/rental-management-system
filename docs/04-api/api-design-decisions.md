@@ -686,8 +686,8 @@ Response 200:
       "tenant_name": "Nguyen Van A",
       "total_amount": 2500000,
       "line_items": [
-        {"type": "rent", "description": "...", "amount": 2000000},
-        {"type": "service", "description": "Điện 120kWh", "amount": 400000}
+        {"line_type": "rent", "description": "...", "amount": 2000000},
+        {"line_type": "service", "description": "Điện 120kWh", "amount": 400000}
       ],
       "warnings": ["Meter reading for 'Điện' missing"]
     }

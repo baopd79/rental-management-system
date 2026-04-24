@@ -214,7 +214,7 @@ Landlord only.
 | 44 | GET | `/api/v1/properties/{pid}/services` | 🏠 | US-057 ✅ | List services của property. Filter: `is_active`, `billing_type` |
 | 45 | POST | `/api/v1/properties/{pid}/services` | 🏠 | US-058 ✅ | Create service. Body: `{name, billing_type, price, unit?, scope, applied_room_ids?, note?}`. Guard: `per_meter` phải có `unit` + `scope` |
 | 46 | GET | `/api/v1/services/{id}` | 🏠 | US-057 ✅ | Detail kèm `applied_room_ids` array |
-| 47 | PATCH | `/api/v1/services/{id}` | 🏠 | US-059 ✅ | Partial update. Body: `{name?, price?, applied_room_ids?, note?}`. Guard: không đổi `billing_type`, không đổi `unit` |
+| 47 | PATCH | `/api/v1/services/{id}` | 🏠 | US-059 ✅ | Partial update. Body: `{name?, applied_room_ids?, note?}`. **Immutable**: `billing_type`, `unit`, `price`, `scope`. Đổi giá → deactivate + tạo service mới |
 | 48 | POST | `/api/v1/services/{id}/activate` | 🏠 | US-061 ✅ | Toggle `is_active=true`. Guard: đã active → 409 `SERVICE_ALREADY_ACTIVE` |
 | 49 | POST | `/api/v1/services/{id}/deactivate` | 🏠 | US-061 ✅ | Toggle `is_active=false`. Guard: đã inactive → 409 `SERVICE_ALREADY_INACTIVE` |
 | 50 | GET | `/api/v1/services` | 🏠 | US-057 ✅ | Flat alias: `?property_id=X`. Filter: `is_active`, `billing_type` |
@@ -275,7 +275,7 @@ Landlord manage, Tenant view own.
 | # | Method | Path | Auth | Stories | Notes |
 |---|---|---|---|---|---|
 | 56 | POST | `/api/v1/properties/{pid}/invoices/preview` | 🏠 | US-076 ✅ | **Preview batch** (no persist). Body: `{billing_month, exclude_lease_ids?}`. Response: preview array + summary + warnings |
-| 57 | POST | `/api/v1/properties/{pid}/invoices` | 🏠 | US-077 ✅ | **Commit batch** (persist). Body: `{billing_month, exclude_lease_ids?}`. Response: created invoices + summary. Guard: duplicate (lease+month) skip hoặc 409 theo `on_duplicate` param |
+| 57 | POST | `/api/v1/properties/{pid}/invoices` | 🏠 | US-077 ✅ | **Commit batch** (persist). Body: `{billing_month, exclude_lease_ids?, on_duplicate?}`. Response: created invoices + summary. Guard: duplicate (lease+month) skip hoặc 409 theo `on_duplicate` body field |
 | 58 | POST | `/api/v1/leases/{lid}/invoices/preview` | 🏠 | US-076 ✅ | Preview single lease invoice |
 | 59 | POST | `/api/v1/leases/{lid}/invoices` | 🏠 | US-077 ✅ | Commit single lease invoice. Guard: duplicate → 409 `DUPLICATE_INVOICE` |
 | 60 | GET | `/api/v1/invoices` | 🔑 | US-078 ✅ | List. Landlord = all own. Tenant = own only. Filter: `status__in`, `lease_id`, `tenant_id`, `billing_month__gte`, `billing_month__lte`, `voided_at__isnull` |
@@ -298,14 +298,14 @@ Landlord manage, Tenant view own.
       "total_amount": 2500000,
       "line_items": [
         {
-          "type": "rent",
+          "line_type": "rent",
           "description": "Tiền phòng tháng 5/2026",
           "amount": 2000000,
           "billing_period_start": "2026-05-01",
           "billing_period_end": "2026-05-31"
         },
         {
-          "type": "service",
+          "line_type": "service",
           "service_name": "Điện",
           "description": "120 kWh (1110 → 1230)",
           "amount": 400000,
@@ -338,7 +338,7 @@ void     = voided_at IS NOT NULL
 - `service` — điện/nước/internet... (mô tả kèm reading cũ/mới)
 - `adjustment` — manual (Landlord add note)
 
-**`on_duplicate` param** cho batch commit:
+**`on_duplicate` body field** cho batch commit:
 - `skip` (default) — bỏ qua lease có invoice trùng tháng
 - `error` — fail nếu có bất kỳ duplicate
 
