@@ -1,0 +1,184 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'alembic/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/backend-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'alembic/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+# Cancel in-progress runs when a new commit is pushed to the same branch
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-type:
+    name: Lint + type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check backend/
+
+      - name: Ruff format check
+        run: uv run ruff format --check backend/
+
+      - name: Mypy type check
+        run: uv run mypy backend/
+
+  tests:
+    name: Unit + integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: rms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testuser -d rms_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://testuser:testpass@localhost:5432/rms_test
+      JWT_SECRET_KEY: test-secret-key-only-for-ci
+      ENVIRONMENT: testing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run Alembic migrations
+        run: uv run alembic upgrade head
+
+      - name: Run pytest with coverage
+        run: |
+          uv run pytest \
+            --cov=backend \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=70 \
+            -v
+
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'pull_request'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  migration-check:
+    name: Migration up/down/up
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: rms_migrate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testuser -d rms_migrate_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://testuser:testpass@localhost:5432/rms_migrate_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Upgrade to head
+        run: uv run alembic upgrade head
+
+      - name: Downgrade to base
+        run: uv run alembic downgrade base
+
+      - name: Upgrade to head again (reproducibility check)
+        run: uv run alembic upgrade head
+
+      - name: Check for undetected autogenerate changes
+        run: |
+          uv run alembic revision --autogenerate -m "ci_check" --sql > /tmp/migration_check.sql || true
+          if grep -q "op.create_table\|op.add_column\|op.drop_column\|op.alter_column" /tmp/migration_check.sql; then
+            echo "ERROR: Model changes exist without corresponding migration!"
+            cat /tmp/migration_check.sql
+            exit 1
+          fi
+          echo "OK: No undetected model changes."
+
+  docker-build:
+    name: Docker build verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: false
+          tags: rms-backend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
