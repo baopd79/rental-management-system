@@ -1,4 +1,5 @@
 from sqlmodel import Session, text
+
 from app.db.session import engine
 
 with Session(engine) as s:

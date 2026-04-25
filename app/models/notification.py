@@ -31,8 +31,7 @@ class Notification(UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, SQLModel, table=True
 
     recipient_id: UUID = Field(
         foreign_key="users.id",
-        description="User nhận notification. ON DELETE CASCADE "
-                    "(xóa user → xóa notifications).",
+        description="User nhận notification. ON DELETE CASCADE (xóa user → xóa notifications).",
     )
     event_key: str = Field(
         max_length=50,
@@ -88,6 +87,7 @@ class NotificationMarkRead(SQLModel):
     Empty body — chỉ cần trigger. Server set is_read=True, read_at=now.
     Nhưng vẫn define schema để FastAPI generate OpenAPI doc rõ ràng.
     """
+
     pass
 
 

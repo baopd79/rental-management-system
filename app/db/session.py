@@ -5,6 +5,7 @@
 # SessionLocal — factory tạo Session (1 đơn vị "transaction context")
 # get_db() — FastAPI dependency cấp Session cho endpoint, đảm bảo cleanup sau khi request xong
 from collections.abc import Generator
+
 from sqlmodel import Session, create_engine
 
 from app.core.config import get_settings

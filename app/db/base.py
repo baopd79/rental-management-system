@@ -10,16 +10,15 @@ Lưu ý về `updated_at`:
 Auto-update qua SQLAlchemy event listener ở Phase 4 (chưa implement ở đây).
 Alternative: PostgreSQL trigger — defer decision to Phase 4.
 """
+
 import re
-import sqlalchemy as sa
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Type
-from datetime import datetime, timezone
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import DateTime, text
 from sqlmodel import Field, SQLModel
-
 
 # ============================================================
 # Naming convention for database constraints
@@ -45,13 +44,14 @@ NAMING_CONVENTION = {
 
 SQLModel.metadata.naming_convention = NAMING_CONVENTION
 
+
 def _camel_to_snake(name: str) -> str:
     """UserRole -> user_role, BillingType -> billing_type."""
     s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
-def create_pg_enum(enum_cls: Type[Enum]) -> sa.Enum:
+def create_pg_enum(enum_cls: type[Enum]) -> sa.Enum:
     """Factory tạo sa.Enum cho Postgres với:
     - values_callable: dùng .value lowercase thay vì .name UPPERCASE
     - name: <snake_case>_enum, match convention ERD section 9
@@ -64,9 +64,10 @@ def create_pg_enum(enum_cls: Type[Enum]) -> sa.Enum:
         name=f"{_camel_to_snake(enum_cls.__name__)}_enum",
     )
 
+
 def _utc_now() -> datetime:
     """Current UTC time with tz-aware datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class UUIDPrimaryKeyMixin(SQLModel):

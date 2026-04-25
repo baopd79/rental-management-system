@@ -1,24 +1,24 @@
-"""Structured logging configuration.
-
-Two output modes:
-- Development: human-readable colored console
-- Staging/Production: JSON for log aggregators
-"""
+"""Structured logging configuration."""
 
 import logging
 import sys
 from contextvars import ContextVar
+from typing import Any
 
 import structlog
+from structlog.types import EventDict, Processor, WrappedLogger
 
 from app.core.config import get_settings
 
-# Contextvar for request-scoped fields (request_id, user_id, ...)
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 
-def _add_request_id(logger, method_name, event_dict):
-    """Processor: inject request_id from contextvar into log entry."""
+def _add_request_id(
+    logger: WrappedLogger,
+    method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    """Inject request_id from contextvar into log entry."""
     request_id = request_id_var.get()
     if request_id:
         event_dict["request_id"] = request_id
@@ -29,22 +29,20 @@ def configure_logging() -> None:
     """Setup structlog. Call once at app startup."""
     settings = get_settings()
 
-    # Set stdlib logging level (uvicorn, sqlalchemy use stdlib)
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=settings.log_level,
     )
 
-    # Common processors for both dev and prod
-    shared_processors = [
+    shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         _add_request_id,
     ]
 
-    # Final renderer: pretty for dev, JSON for prod
+    renderer: Processor
     if settings.app_env == "development":
         renderer = structlog.dev.ConsoleRenderer(colors=True)
     else:
@@ -60,6 +58,6 @@ def configure_logging() -> None:
     )
 
 
-def get_logger(name: str | None = None):
-    """Get a structured logger. Use module name typically."""
+def get_logger(name: str | None = None) -> Any:
+    """Get a structured logger."""
     return structlog.get_logger(name)

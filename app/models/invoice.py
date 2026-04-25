@@ -31,7 +31,6 @@ from sqlmodel import Field, SQLModel
 from app.core.enums import LineType, VoidedReason
 from app.db.base import CreatedAtOnlyMixin, UUIDPrimaryKeyMixin, create_pg_enum
 
-
 # ============================================================
 # Invoice
 # ============================================================
@@ -228,9 +227,7 @@ class InvoiceLineItemBase(SQLModel):
     )
 
 
-class InvoiceLineItem(
-    InvoiceLineItemBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True
-):
+class InvoiceLineItem(InvoiceLineItemBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     """`invoice_line_items` table.
 
     Line item IMMUTABLE cùng với Invoice (không có updated_at).

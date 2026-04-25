@@ -54,7 +54,7 @@ class AuditLog(UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, SQLModel, table=True):
     landlord_id: UUID = Field(
         foreign_key="users.id",
         description="Denormalized — scope Landlord của audit entry này. "
-                    "Cho query 'audit trong property tôi' không JOIN",
+        "Cho query 'audit trong property tôi' không JOIN",
     )
 
     # Target (generic, no FK)

@@ -2,12 +2,12 @@
 from datetime import date, datetime
 from uuid import UUID
 
+from pydantic import EmailStr
+
 # third-party
 from sqlalchemy import Column, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, SQLModel
-from pydantic import EmailStr
-
 
 # local
 from app.db.base import TimestampMixin, UUIDPrimaryKeyMixin

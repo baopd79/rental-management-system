@@ -5,18 +5,18 @@ Wires togeter:
 -API routers
 """
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, text
 
-from app.core.config import get_settings
-from app.db.session import engine
-from app.api.v1.router import api_router
 from app.api import health
+from app.api.v1.router import api_router
+from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.db.session import engine
 from app.middleware.request_id import RequestIDMiddleware
 
 settings = get_settings()
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("app_starting", version=settings.app_version, env=settings.app_env)
 
     with Session(engine) as session:
-        session.exec(text("SELECT 1"))
+        session.scalar(text("SELECT 1"))
 
     log.info("app_started")
     yield

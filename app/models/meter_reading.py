@@ -61,8 +61,7 @@ class MeterReading(MeterReadingBase, UUIDPrimaryKeyMixin, TimestampMixin, table=
     room_id: UUID | None = Field(
         default=None,
         foreign_key="rooms.id",
-        description="NULL = shared meter (cả property). "
-        "NOT NULL = per-room reading.",
+        description="NULL = shared meter (cả property). NOT NULL = per-room reading.",
     )
     created_by_user_id: UUID = Field(
         foreign_key="users.id",

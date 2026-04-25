@@ -2,6 +2,7 @@
 # Một class chứa tất cả settings mà app cần để chạy: DB URL, JWT secret, environment name, CORS origins, log level...
 # Settings được load từ environment variables (không hard-code vào code).
 from functools import lru_cache
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

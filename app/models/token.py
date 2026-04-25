@@ -26,10 +26,10 @@ from sqlmodel import Field, SQLModel
 
 from app.db.base import CreatedAtOnlyMixin, UUIDPrimaryKeyMixin
 
-
 # ============================================================
 # InviteToken — US-004 Landlord mời Tenant
 # ============================================================
+
 
 class InviteTokenBase(SQLModel):
     """Shared fields cho invite token."""
@@ -40,9 +40,7 @@ class InviteTokenBase(SQLModel):
     )
 
 
-class InviteToken(
-    InviteTokenBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True
-):
+class InviteToken(InviteTokenBase, UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     """`invite_tokens` table — TTL 7 ngày, single-use."""
 
     __tablename__ = "invite_tokens"
@@ -76,6 +74,7 @@ class InviteToken(
 # PasswordResetToken — reset password flow
 # ============================================================
 
+
 class PasswordResetToken(UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     """`password_reset_tokens` table — TTL 1 giờ, single-use."""
 
@@ -103,6 +102,7 @@ class PasswordResetToken(UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
 # ============================================================
 # RefreshToken — JWT refresh với rotation chain
 # ============================================================
+
 
 class RefreshToken(UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
     """`refresh_tokens` table — rotation chain for theft detection.
@@ -137,13 +137,14 @@ class RefreshToken(UUIDPrimaryKeyMixin, CreatedAtOnlyMixin, table=True):
         default=None,
         foreign_key="refresh_tokens.id",
         description="Self-FK: token này được rotate thành token nào. "
-                    "NULL = chưa rotate hoặc token mới nhất.",
+        "NULL = chưa rotate hoặc token mới nhất.",
     )
 
 
 # ============================================================
 # API schemas (minimal — tokens ít khi expose ra client)
 # ============================================================
+
 
 class InviteTokenCreate(SQLModel):
     """Input khi Landlord gửi invite — service layer tự sinh token_hash + expires_at."""

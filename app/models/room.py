@@ -41,8 +41,7 @@ class RoomBase(SQLModel):
     )
     max_occupants: int | None = Field(
         default=None,
-        description="Giới hạn số người (Tenant + Occupants). "
-        "NULL = không giới hạn. US-034 AC3.",
+        description="Giới hạn số người (Tenant + Occupants). NULL = không giới hạn. US-034 AC3.",
     )
 
 

@@ -14,11 +14,12 @@ venv/
 .venv/
 env/
 
+
 # Env files
 .env
 .env.local
 .env.*.local
-
+.env.test
 # IDE
 .vscode/
 .idea/

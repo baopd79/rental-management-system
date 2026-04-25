@@ -2,11 +2,12 @@
 import os
 from logging.config import fileConfig
 
-# Third-party
-from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
+
+# Third-party
+from alembic import context
 
 # Application (import sau khi SQLModel đã load)
 from app import models  # noqa: F401  - load models, không dùng trực tiếp
@@ -73,9 +74,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata, compare_type=True
-        )
+        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
 
         with context.begin_transaction():
             context.run_migrations()

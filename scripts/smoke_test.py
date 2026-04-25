@@ -1,10 +1,12 @@
 """Smoke test — verify DB schema works end-to-end với SQLModel."""
 
 import os
+
 from dotenv import load_dotenv
 from sqlmodel import Session, create_engine, select
-from app.models import User, Property
+
 from app.core.enums import UserRole
+from app.models import Property, User
 
 load_dotenv()
 
@@ -35,9 +37,7 @@ def test_user_crud():
         print(f"✅ Create User: {landlord.id}")
 
         # Read
-        result = session.exec(
-            select(User).where(User.email == "smoke_test@rms.local")
-        ).one()
+        result = session.exec(select(User).where(User.email == "smoke_test@rms.local")).one()
         assert result.role == UserRole.LANDLORD, f"Enum mismatch: {result.role}"
         print(f"✅ Read back: role={result.role} ({type(result.role).__name__})")
 

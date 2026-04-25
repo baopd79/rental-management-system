@@ -1,0 +1,18 @@
+# .dockerignore
+.git
+.github
+.venv
+__pycache__/
+*.pyc
+.pytest_cache
+htmlcov/
+.coverage
+.env
+.env.test
+.env.*.local
+docs/
+tests/
+*.md
+.idea/
+.vscode/
+.DS_Store

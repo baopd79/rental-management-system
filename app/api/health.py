@@ -17,7 +17,7 @@ def health_check(db: Session = Depends(get_db)) -> JSONResponse:
 
     # Check DB
     try:
-        db.exec(text("SELECT 1"))
+        db.scalar(text("SELECT 1"))
         db_status = "ok"
         http_status = status.HTTP_200_OK
         overall = "ok"

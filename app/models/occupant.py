@@ -46,9 +46,7 @@ class Occupant(OccupantBase, TimestampMixin, UUIDPrimaryKeyMixin, table=True):
         default_factory=date.today,
         description="Ngày thực tế occupant đến ở, not null)",
     )
-    moved_out_date: date | None = Field(
-        default=None, description=" Ngày occupant dọn đi"
-    )
+    moved_out_date: date | None = Field(default=None, description=" Ngày occupant dọn đi")
     tenant_id: UUID = Field(
         foreign_key="tenants.id", description="Tenant đại diện cho occupant ở cùng"
     )
