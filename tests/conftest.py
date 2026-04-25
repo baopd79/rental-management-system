@@ -22,7 +22,7 @@ assert (
 ), "DATABASE_URL must be set (via .env.test for local or env vars for CI)"
 os.environ.setdefault("JWT_SECRET_KEY", "test_secret_pytest_only")
 
-import app.models  # noqa: F401
+import app.models
 from app.api.deps import get_db
 from app.main import app
 

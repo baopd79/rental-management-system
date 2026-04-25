@@ -85,3 +85,8 @@ module = [
     "app.db.base",
 ]
 disable_error_code = ["call-overload"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+"alembic/env.py" = ["E402"]
+"tests/conftest.py" = ["E402", "F401"]  # E402: setup env before imports; F401: app.models for SQLModel registration
