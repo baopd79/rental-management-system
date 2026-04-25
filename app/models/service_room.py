@@ -9,7 +9,6 @@ Schema:
 - Không có updated_at — junction table thường immutable (add/remove, không edit)
 """
 
-from datetime import datetime
 from uuid import UUID
 
 from sqlmodel import Field, SQLModel
