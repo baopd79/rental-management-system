@@ -190,7 +190,7 @@ class InvoiceLineItemBase(SQLModel):
     )
     description: str = Field(
         max_length=500,
-        description='Human-readable. VD: "Điện T04/2026: 1234 → 1456 = 222 kWh × 3,500đ"',
+        description='Human-readable. VD: "Điện T04/2026: 1234 → 1456 = 222 kWh x 3,500đ"',
     )
     unit: str | None = Field(
         default=None,
@@ -219,7 +219,7 @@ class InvoiceLineItemBase(SQLModel):
         max_digits=12,
         decimal_places=2,
         description="Tổng line. Có thể âm CHỈ khi line_type=adjustment. "
-        "Cho rent/service: amount = quantity × unit_price",
+        "Cho rent/service: amount = quantity x unit_price",
     )
     sort_order: int = Field(
         default=0,

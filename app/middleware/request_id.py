@@ -2,13 +2,11 @@
 
 from uuid import uuid4
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import ASGIApp
-from typing import Any
+
 from app.core.logging import request_id_var
-from starlette.middleware.base import RequestResponseEndpoint
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

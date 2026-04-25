@@ -8,17 +8,17 @@ Khi thêm enum mới:
 3. Ở model: dùng `sa.Enum(EnumName, name="enum_name_in_db")` trong Field()
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class UserRole(str, Enum):
+class UserRole(StrEnum):
     """ADR-0005 — MVP: 2 roles. v1.x thêm manager, v2.x investor."""
 
     LANDLORD = "landlord"
     TENANT = "tenant"
 
 
-class DepositStatus(str, Enum):
+class DepositStatus(StrEnum):
     """Phase 2 Nhóm 4 — 4 trạng thái deposit."""
 
     HELD = "held"
@@ -27,7 +27,7 @@ class DepositStatus(str, Enum):
     DEDUCTED = "deducted"
 
 
-class BillingType(str, Enum):
+class BillingType(StrEnum):
     """Phase 2 Nhóm 5 — 3 cách tính dịch vụ."""
 
     PER_METER = "per_meter"
@@ -35,21 +35,21 @@ class BillingType(str, Enum):
     FIXED = "fixed"
 
 
-class ServiceScope(str, Enum):
+class ServiceScope(StrEnum):
     """Phase 2 Nhóm 5 — service áp dụng cho toàn bộ hay chọn lọc."""
 
     ALL_ROOMS = "all_rooms"
     SELECTED_ROOMS = "selected_rooms"
 
 
-class MeterScope(str, Enum):
+class MeterScope(StrEnum):
     """Phase 2 Nhóm 6 — công tơ chung hay riêng từng phòng."""
 
     SHARED = "shared"
     PER_ROOM = "per_room"
 
 
-class LineType(str, Enum):
+class LineType(StrEnum):
     """Phase 2 Nhóm 7 — 3 loại line trong Invoice."""
 
     RENT = "rent"
@@ -57,7 +57,7 @@ class LineType(str, Enum):
     ADJUSTMENT = "adjustment"
 
 
-class PaymentMethod(str, Enum):
+class PaymentMethod(StrEnum):
     """Phase 2 Nhóm 8 — 4 phương thức thanh toán."""
 
     CASH = "cash"
@@ -66,7 +66,7 @@ class PaymentMethod(str, Enum):
     OTHER = "other"
 
 
-class VoidedReason(str, Enum):
+class VoidedReason(StrEnum):
     """Phase 2 US-084 AC2 — lý do void Invoice (enum, không free text)."""
 
     WRONG_METER_READING = "wrong_meter_reading"
