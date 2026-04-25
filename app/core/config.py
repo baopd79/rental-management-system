@@ -2,6 +2,7 @@
 # Một class chứa tất cả settings mà app cần để chạy: DB URL, JWT secret, environment name, CORS origins, log level...
 # Settings được load từ environment variables (không hard-code vào code).
 from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,15 @@ class Settings(BaseSettings):
 
     # === Logging ===
     log_level: str = "INFO"
+
+    @field_validator("log_level")
+    @classmethod
+    def uppercase_log_level(cls, v: str) -> str:
+        v = v.upper()
+        valid = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if v not in valid:
+            raise ValueError(f"log_level must be one of {valid}, got '{v}'")
+        return v
 
 
 @lru_cache
