@@ -28,6 +28,8 @@ class UserBase(SQLModel):
 
     email: EmailStr = Field(
         max_length=255,
+        unique=True,
+        index=True,
         description="Dùng để login, unique global",
     )
     role: UserRole = Field(
