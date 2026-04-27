@@ -26,6 +26,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.11",
+    "types-python-jose>=3.5.0.20260408",
 ]
 
 [tool.pytest.ini_options]
@@ -87,3 +88,4 @@ disable_error_code = ["call-overload"]
 "tests/**/*.py" = ["S101"]              # allow assert in tests
 "alembic/env.py" = ["E402"]             # module-level import not at top is intentional
 "tests/conftest.py" = ["E402", "F401"]  # E402: setup env before imports; F401: app.models for SQLModel registration
+

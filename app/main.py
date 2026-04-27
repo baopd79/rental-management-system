@@ -15,6 +15,7 @@ from sqlmodel import Session, text
 from app.api import health
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.db.session import engine
 from app.middleware.request_id import RequestIDMiddleware
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="RMS API", version=settings.app_version, lifespan=lifespan)
 
+# exceptions
+register_exception_handlers(app)
 
 # Middleware
 
