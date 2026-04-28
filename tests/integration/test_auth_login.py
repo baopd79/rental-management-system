@@ -41,9 +41,7 @@ class TestLogin:
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
 
-    def test_email_case_insensitive(
-        self, client: TestClient, landlord_user: User
-    ) -> None:
+    def test_email_case_insensitive(self, client: TestClient, landlord_user: User) -> None:
         """L4: Login với email UPPERCASE → 200 (DB store lowercase)."""
         response = client.post(
             self.URL,
@@ -51,9 +49,7 @@ class TestLogin:
         )
         assert response.status_code == 200
 
-    def test_inactive_user(
-        self, client: TestClient, landlord_user: User, db_session
-    ) -> None:
+    def test_inactive_user(self, client: TestClient, landlord_user: User, db_session) -> None:
         """L5: User inactive → 401 INVALID_CREDENTIALS (uniform with other failures)."""
         landlord_user.is_active = False
         db_session.add(landlord_user)

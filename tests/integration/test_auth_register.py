@@ -50,9 +50,7 @@ class TestRegister:
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "EMAIL_ALREADY_EXISTS"
 
-    def test_duplicate_email_case_insensitive(
-        self, client: TestClient, landlord_user
-    ) -> None:
+    def test_duplicate_email_case_insensitive(self, client: TestClient, landlord_user) -> None:
         """R3: Email case-insensitive uniqueness — UPPERCASE input matches lowercase DB."""
         response = client.post(
             self.URL,

@@ -19,9 +19,9 @@ if "DATABASE_URL" not in os.environ:
         load_dotenv(env_test)
 
 # Hard requirement
-assert (
-    "DATABASE_URL" in os.environ
-), "DATABASE_URL must be set (via .env.test for local or env vars for CI)"
+assert "DATABASE_URL" in os.environ, (
+    "DATABASE_URL must be set (via .env.test for local or env vars for CI)"
+)
 os.environ.setdefault("JWT_SECRET_KEY", "test_secret_pytest_only")
 
 import app.models
