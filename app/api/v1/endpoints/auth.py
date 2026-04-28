@@ -1,7 +1,12 @@
 from fastapi import APIRouter, status
 
-from app.api.deps import AuthServiceDep
-from app.schemas.auth import AuthSuccessResponse, LoginRequest, RegisterRequest
+from app.api.deps import AuthServiceDep, CurrentUserDep
+from app.schemas.auth import (
+    AuthSuccessResponse,
+    LoginRequest,
+    RegisterRequest,
+    UserRead,
+)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -24,3 +29,12 @@ def register(req: RegisterRequest, svc: AuthServiceDep) -> AuthSuccessResponse:
 )
 def login(req: LoginRequest, svc: AuthServiceDep) -> AuthSuccessResponse:
     return svc.login(req)
+
+
+@router.get(
+    "/me",
+    response_model=UserRead,
+    summary="Get current authenticated user",
+)
+def get_me(user: CurrentUserDep) -> UserRead:
+    return UserRead.model_validate(user)
