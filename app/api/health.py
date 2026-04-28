@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, text
 
-from app.db.session import get_db
 from app.core.config import get_settings
+from app.db.session import get_db
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
