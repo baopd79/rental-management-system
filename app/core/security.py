@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -27,7 +27,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(user_id: UUID, role: str) -> str:
     """Create signed JWT access token (HS256, TTL from settings)."""
     settings = get_settings()
-    now = int(datetime.now(timezone.utc).timestamp())
+    now = int(datetime.now(UTC).timestamp())
     ttl_seconds = settings.jwt_access_token_expire_minutes * 60
     payload = {
         "sub": str(user_id),
