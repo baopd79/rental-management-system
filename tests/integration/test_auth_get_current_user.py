@@ -10,9 +10,7 @@ class TestGetCurrentUser:
 
     URL = "/api/v1/auth/me"
 
-    def test_valid_token(
-        self, client: TestClient, landlord_user: User, auth_header
-    ) -> None:
+    def test_valid_token(self, client: TestClient, landlord_user: User, auth_header) -> None:
         """G1: Valid token → 200 + user info."""
         response = client.get(self.URL, headers=auth_header)
         assert response.status_code == 200

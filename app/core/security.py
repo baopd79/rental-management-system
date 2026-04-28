@@ -36,14 +36,10 @@ def create_access_token(user_id: UUID, role: str) -> str:
         "exp": now + ttl_seconds,
         "jti": str(uuid4()),
     }
-    return jwt.encode(
-        payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
-    )
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     """Decode JWT, raise jose.JWTError if invalid/expired."""
     settings = get_settings()
-    return jwt.decode(
-        token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
-    )
+    return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
